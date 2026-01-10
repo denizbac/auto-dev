@@ -8,15 +8,15 @@ variable "aws_region" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type"
+  description = "EC2 instance type (t3.xlarge recommended for 10 agents)"
   type        = string
-  default     = "t3.medium"
+  default     = "t3.xlarge"  # 4 vCPU, 16GB RAM
 }
 
 variable "volume_size" {
   description = "Root volume size in GB"
   type        = number
-  default     = 50
+  default     = 100  # More space for multiple repo workspaces
 }
 
 variable "key_name" {
