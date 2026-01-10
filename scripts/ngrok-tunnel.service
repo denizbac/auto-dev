@@ -1,0 +1,19 @@
+[Unit]
+Description=ngrok tunnel for Slack Bot
+After=network.target slack-bot.service
+Requires=slack-bot.service
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/bin/ngrok http 8081 --log=stdout
+Restart=always
+RestartSec=10
+
+# Note: ngrok free tier generates a new URL on each restart.
+# After reboot, run: curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url'
+# Then update your Slack app's slash command URL.
+
+[Install]
+WantedBy=multi-user.target
+

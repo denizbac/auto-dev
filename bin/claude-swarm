@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+"""
+Claude Swarm CLI - Discussion, Proposals, and Voting
+=====================================================
+
+Commands:
+    claude-swarm discuss <agent> <message>         Post to discussion board
+    claude-swarm discuss --recent                  View recent discussions
+    claude-swarm discuss --topic <topic>           View topic thread
+    
+    claude-swarm propose <type> <title> <desc> [payload]   Create proposal
+    claude-swarm proposals                         List open proposals
+    claude-swarm proposals --approved              List approved (unimplemented)
+    
+    claude-swarm vote <proposal_id> <for|against> [comment]  Vote on proposal
+    
+    claude-swarm status                            Swarm health status
+
+Examples:
+    claude-swarm discuss hunter "Found a great opportunity in AI safety tools"
+    claude-swarm propose new_agent "Researcher" "Market research specialist" '{"prompt": "..."}'
+    claude-swarm vote abc123 for "Good idea, we need this"
+"""
+
+import sys
+import os
+import json
+import argparse
+from datetime import datetime
+from pathlib import Path
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from watcher.orchestrator import get_orchestrator, ProposalType
+
+
+def cmd_discuss(args):
+    """Handle discuss subcommand."""
+    orch = get_orchestrator(redis_url="redis://localhost:6379")
+    
+    if args.recent:
+        posts = orch.get_recent_discussions(minutes=60)
+        if not posts:
+            print("No recent discussions")
+            return
+        
+        print("\n=== Recent Discussions (last hour) ===\n")
+        for post in reversed(posts):
+            time_str = post.created_at.split('T')[1][:8]
+            reply = f" (reply)" if post.in_reply_to else ""
+            votes = f" [+{post.votes_up}/-{post.votes_down}]" if post.votes_up or post.votes_down else ""
+            print(f"[{time_str}] [{post.author}]{reply}{votes}")
+            print(f"  Topic: {post.topic}")
+            print(f"  {post.content[:200]}")
+            print()
+        return
+    
+    if args.topic:
+        posts = orch.get_discussions(topic=args.topic)
+        if not posts:
+            print(f"No discussions on topic: {args.topic}")
+            return
+        
+        print(f"\n=== Discussion: {args.topic} ===\n")
+        for post in reversed(posts):
+            time_str = post.created_at.split('T')[1][:8]
+            print(f"[{time_str}] {post.author}: {post.content}")
+        return
+    
+    if args.agent and args.message:
+        post = orch.post_discussion(
+            author=args.agent,
+            topic="general" if not args.in_topic else args.in_topic,
+            content=args.message
+        )
+        print(f"✅ Posted to discussion (id: {post.id[:8]})")
+    else:
+        print("Usage: claude-swarm discuss <agent> <message>")
+        print("       claude-swarm discuss --recent")
+        print("       claude-swarm discuss --topic <topic>")
+
+
+def cmd_propose(args):
+    """Handle propose subcommand."""
+    orch = get_orchestrator(redis_url="redis://localhost:6379")
+    
+    valid_types = [t.value for t in ProposalType]
+    if args.type not in valid_types:
+        print(f"Invalid proposal type. Valid types: {', '.join(valid_types)}")
+        return
+    
+    payload = {}
+    if args.payload:
+        try:
+            payload = json.loads(args.payload)
+        except json.JSONDecodeError:
+            print("Error: payload must be valid JSON")
+            return
+    
+    proposal = orch.create_proposal(
+        proposal_type=args.type,
+        title=args.title,
+        description=args.description,
+        proposed_by=args.author or "unknown",
+        payload=payload
+    )
+    
+    print(f"✅ Proposal created: {proposal.id}")
+    print(f"   Type: {proposal.proposal_type}")
+    print(f"   Title: {proposal.title}")
+    print(f"\nAgents can vote with:")
+    print(f"   claude-swarm vote {proposal.id} for 'reason'")
+    print(f"   claude-swarm vote {proposal.id} against 'reason'")
+
+
+def cmd_proposals(args):
+    """Handle proposals subcommand."""
+    orch = get_orchestrator(redis_url="redis://localhost:6379")
+    
+    if args.approved:
+        proposals = orch.get_approved_proposals(unimplemented_only=True)
+        title = "Approved Proposals (Awaiting Implementation)"
+    else:
+        proposals = orch.get_open_proposals()
+        title = "Open Proposals (Awaiting Votes)"
+    
+    if not proposals:
+        print(f"No {title.lower()}")
+        return
+    
+    print(f"\n=== {title} ===\n")
+    for p in proposals:
+        votes_for = len(p.votes_for)
+        votes_against = len(p.votes_against)
+        print(f"ID: {p.id}")
+        print(f"  Type: {p.proposal_type}")
+        print(f"  Title: {p.title}")
+        print(f"  By: {p.proposed_by}")
+        print(f"  Votes: +{votes_for} / -{votes_against}")
+        print(f"  Status: {p.status}")
+        print(f"  Description: {p.description[:100]}...")
+        print()
+
+
+def cmd_vote(args):
+    """Handle vote subcommand."""
+    orch = get_orchestrator(redis_url="redis://localhost:6379")
+    
+    vote_for = args.direction.lower() in ('for', 'yes', 'approve', '+1', '👍')
+    
+    success = orch.vote_proposal(
+        proposal_id=args.proposal_id,
+        agent_id=args.agent or "unknown",
+        vote_for=vote_for,
+        comment=args.comment
+    )
+    
+    if success:
+        direction = "FOR" if vote_for else "AGAINST"
+        print(f"✅ Vote recorded: {direction}")
+    else:
+        print("❌ Vote failed (already voted or proposal not found)")
+
+
+def cmd_status(args):
+    """Handle status subcommand."""
+    orch = get_orchestrator(redis_url="redis://localhost:6379")
+    
+    print("\n=== Swarm Status ===\n")
+    
+    # Agent statuses
+    statuses = orch.get_agent_statuses()
+    if statuses:
+        print("Agents:")
+        for s in statuses:
+            print(f"  {s['agent_id']}: {s['status']} (tasks: {s['tasks_completed']})")
+    
+    # Task queue
+    queue_stats = orch.get_queue_stats()
+    print(f"\nTask Queue:")
+    print(f"  Total: {queue_stats['total']}")
+    for status, count in queue_stats['by_status'].items():
+        print(f"    {status}: {count}")
+    
+    # Open proposals
+    proposals = orch.get_open_proposals()
+    print(f"\nOpen Proposals: {len(proposals)}")
+    for p in proposals[:3]:
+        print(f"  - {p.title} (+{len(p.votes_for)}/-{len(p.votes_against)})")
+    
+    # Recent discussions
+    discussions = orch.get_recent_discussions(minutes=30)
+    print(f"\nRecent Discussions: {len(discussions)} posts (last 30 min)")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Claude Swarm CLI - Discussion, Proposals, and Voting",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
+    
+    # discuss
+    discuss_parser = subparsers.add_parser('discuss', help='Discussion board')
+    discuss_parser.add_argument('agent', nargs='?', help='Your agent ID')
+    discuss_parser.add_argument('message', nargs='?', help='Message to post')
+    discuss_parser.add_argument('--recent', action='store_true', help='Show recent discussions')
+    discuss_parser.add_argument('--topic', help='Filter by topic')
+    discuss_parser.add_argument('--in-topic', help='Topic to post in (default: general)')
+    
+    # propose
+    propose_parser = subparsers.add_parser('propose', help='Create a proposal')
+    propose_parser.add_argument('type', help='Proposal type (new_agent, modify_agent, kill_agent, pivot, rule_change)')
+    propose_parser.add_argument('title', help='Proposal title')
+    propose_parser.add_argument('description', help='Proposal description')
+    propose_parser.add_argument('payload', nargs='?', default='{}', help='JSON payload with details')
+    propose_parser.add_argument('--author', help='Proposing agent')
+    
+    # proposals
+    proposals_parser = subparsers.add_parser('proposals', help='List proposals')
+    proposals_parser.add_argument('--approved', action='store_true', help='Show approved (unimplemented)')
+    
+    # vote
+    vote_parser = subparsers.add_parser('vote', help='Vote on a proposal')
+    vote_parser.add_argument('proposal_id', help='Proposal ID')
+    vote_parser.add_argument('direction', help='for or against')
+    vote_parser.add_argument('comment', nargs='?', help='Optional comment')
+    vote_parser.add_argument('--agent', help='Your agent ID')
+    
+    # status
+    status_parser = subparsers.add_parser('status', help='Swarm health status')
+    
+    args = parser.parse_args()
+    
+    if args.command == 'discuss':
+        cmd_discuss(args)
+    elif args.command == 'propose':
+        cmd_propose(args)
+    elif args.command == 'proposals':
+        cmd_proposals(args)
+    elif args.command == 'vote':
+        cmd_vote(args)
+    elif args.command == 'status':
+        cmd_status(args)
+    else:
+        parser.print_help()
+
+
+if __name__ == '__main__':
+    main()
+

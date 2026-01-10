@@ -1,0 +1,975 @@
+#!/usr/bin/env python3
+"""
+Claude Tasks CLI - Inter-Agent Communication Tool
+==================================================
+
+Allows agents to create tasks, send messages, and coordinate via Redis + SQLite.
+
+Usage:
+    claude-tasks create --type build_product --to builder --payload '{"spec": "..."}'
+    claude-tasks message --to builder --type handoff --payload '{"task": "..."}'
+    claude-tasks list [--status pending]
+    claude-tasks claim --agent hunter
+    claude-tasks complete --task-id <id> [--result '{}'] [--error 'message']
+
+This is the bridge between Claude Code workers and the orchestrator.
+"""
+
+import argparse
+import json
+import sys
+import os
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+
+import sqlite3
+
+# Configuration
+ORCHESTRATOR_DB = os.environ.get('ORCHESTRATOR_DB', '/autonomous-claude/data/orchestrator.db')
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+
+# Task types
+VALID_TASK_TYPES = [
+    'scan_platform', 'build_product', 'fix_product', 'deploy', 'write_content', 
+    'market', 'research', 'handoff', 'publish', 'evaluate_idea', 
+    'write_spec', 'code_review', 'test_product', 'monitor_github', 'triage_issue',
+    'respond_to_human', 'directive', 'implement_proposal'
+]
+
+# Agent IDs
+VALID_AGENTS = ['hunter', 'critic', 'pm', 'builder', 'reviewer', 'tester', 'publisher', 'meta', 'liaison', 'support']
+
+# Platforms for approval
+VALID_PLATFORMS = ['gumroad', 'github', 'npm', 'devto', 'lemonsqueezy', 'vercel']
+
+
+def get_redis():
+    """Get Redis connection."""
+    if not REDIS_AVAILABLE:
+        return None
+    try:
+        client = redis.from_url(REDIS_URL)
+        client.ping()
+        return client
+    except:
+        return None
+
+
+def get_db():
+    """Get SQLite connection."""
+    db_path = Path(ORCHESTRATOR_DB)
+    if not db_path.exists():
+        print(f"Error: Database not found at {ORCHESTRATOR_DB}", file=sys.stderr)
+        sys.exit(1)
+    conn = sqlite3.connect(ORCHESTRATOR_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def create_task(args):
+    """Create a new task in the queue."""
+    task_type = args.type
+    if task_type not in VALID_TASK_TYPES:
+        print(f"Warning: Unknown task type '{task_type}'. Valid types: {VALID_TASK_TYPES}", file=sys.stderr)
+    
+    # Parse payload
+    try:
+        payload = json.loads(args.payload) if args.payload else {}
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON payload: {e}", file=sys.stderr)
+        sys.exit(1)
+    
+    task_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    priority = min(10, max(1, args.priority))
+    
+    # Write to SQLite
+    conn = get_db()
+    try:
+        conn.execute("""
+            INSERT INTO tasks (id, type, priority, payload, status, assigned_to, created_by, created_at)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+        """, (task_id, task_type, priority, json.dumps(payload), args.to, args.from_agent, now))
+        conn.commit()
+    finally:
+        conn.close()
+    
+    # Publish to Redis for real-time notification
+    redis_client = get_redis()
+    if redis_client:
+        redis_client.publish('tasks:created', json.dumps({
+            'task_id': task_id,
+            'type': task_type,
+            'priority': priority,
+            'assigned_to': args.to,
+            'created_by': args.from_agent
+        }))
+        # Also add to sorted set for priority queue
+        redis_client.zadd('task_queue', {task_id: priority})
+    
+    # Output
+    result = {
+        'status': 'created',
+        'task_id': task_id,
+        'type': task_type,
+        'priority': priority,
+        'assigned_to': args.to
+    }
+    print(json.dumps(result))
+    return 0
+
+
+def send_message(args):
+    """Send a message to another agent."""
+    if args.to not in VALID_AGENTS:
+        print(f"Warning: Unknown agent '{args.to}'. Valid agents: {VALID_AGENTS}", file=sys.stderr)
+    
+    # Parse payload
+    try:
+        payload = json.loads(args.payload) if args.payload else {}
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON payload: {e}", file=sys.stderr)
+        sys.exit(1)
+    
+    message_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    
+    # Write to SQLite
+    conn = get_db()
+    try:
+        conn.execute("""
+            INSERT INTO agent_mail (id, from_agent, to_agent, message_type, payload, read, created_at)
+            VALUES (?, ?, ?, ?, ?, 0, ?)
+        """, (message_id, args.from_agent, args.to, args.type, json.dumps(payload), now))
+        conn.commit()
+    finally:
+        conn.close()
+    
+    # Publish to Redis for real-time notification
+    redis_client = get_redis()
+    if redis_client:
+        redis_client.publish(f'agent:{args.to}:messages', json.dumps({
+            'message_id': message_id,
+            'from': args.from_agent,
+            'type': args.type,
+            'payload': payload
+        }))
+    
+    result = {
+        'status': 'sent',
+        'message_id': message_id,
+        'to': args.to,
+        'type': args.type
+    }
+    print(json.dumps(result))
+    return 0
+
+
+def list_tasks(args):
+    """List tasks in the queue."""
+    conn = get_db()
+    try:
+        if args.status:
+            cursor = conn.execute(
+                "SELECT * FROM tasks WHERE status = ? ORDER BY priority DESC, created_at ASC LIMIT ?",
+                (args.status, args.limit)
+            )
+        else:
+            cursor = conn.execute(
+                "SELECT * FROM tasks ORDER BY priority DESC, created_at ASC LIMIT ?",
+                (args.limit,)
+            )
+        
+        tasks = []
+        for row in cursor.fetchall():
+            task = dict(row)
+            task['payload'] = json.loads(task['payload']) if task['payload'] else {}
+            tasks.append(task)
+        
+        print(json.dumps({'tasks': tasks}, indent=2))
+    finally:
+        conn.close()
+    return 0
+
+
+def claim_task(args):
+    """Claim the next available task for an agent.
+    
+    Respects assigned_to: if a task is assigned to a specific agent,
+    only that agent can claim it. Unassigned tasks can be claimed by anyone.
+    """
+    conn = get_db()
+    try:
+        # Find highest priority pending task for this agent
+        # Only claim tasks assigned to us OR unassigned tasks
+        if args.types:
+            types = args.types.split(',')
+            placeholders = ','.join('?' * len(types))
+            cursor = conn.execute(f"""
+                SELECT * FROM tasks 
+                WHERE status = 'pending' 
+                AND type IN ({placeholders})
+                AND (assigned_to IS NULL OR assigned_to = ?)
+                ORDER BY priority DESC, created_at ASC
+                LIMIT 1
+            """, types + [args.agent])
+        else:
+            cursor = conn.execute("""
+                SELECT * FROM tasks 
+                WHERE status = 'pending'
+                AND (assigned_to IS NULL OR assigned_to = ?)
+                ORDER BY priority DESC, created_at ASC
+                LIMIT 1
+            """, (args.agent,))
+        
+        row = cursor.fetchone()
+        if not row:
+            print(json.dumps({'status': 'no_tasks', 'message': 'No pending tasks available'}))
+            return 0
+        
+        task_id = row['id']
+        now = datetime.utcnow().isoformat()
+        
+        # Claim it
+        conn.execute("""
+            UPDATE tasks SET status = 'claimed', assigned_to = ?, claimed_at = ?
+            WHERE id = ? AND status = 'pending'
+        """, (args.agent, now, task_id))
+        conn.commit()
+        
+        # Verify we got it
+        cursor = conn.execute("SELECT * FROM tasks WHERE id = ? AND assigned_to = ?", (task_id, args.agent))
+        row = cursor.fetchone()
+        if not row:
+            print(json.dumps({'status': 'race_lost', 'message': 'Task claimed by another agent'}))
+            return 0
+        
+        task = dict(row)
+        task['payload'] = json.loads(task['payload']) if task['payload'] else {}
+        
+        # Notify via Redis
+        redis_client = get_redis()
+        if redis_client:
+            redis_client.publish('tasks:claimed', json.dumps({
+                'task_id': task_id,
+                'agent': args.agent
+            }))
+        
+        print(json.dumps({'status': 'claimed', 'task': task}))
+    finally:
+        conn.close()
+    return 0
+
+
+def complete_task(args):
+    """Mark a task as complete or failed."""
+    conn = get_db()
+    try:
+        now = datetime.utcnow().isoformat()
+        status = 'failed' if args.error else 'completed'
+        
+        # Parse result
+        result = None
+        if args.result:
+            try:
+                result = json.loads(args.result)
+            except json.JSONDecodeError:
+                result = {'output': args.result}
+        
+        conn.execute("""
+            UPDATE tasks SET status = ?, completed_at = ?, result = ?, error = ?
+            WHERE id = ?
+        """, (status, now, json.dumps(result) if result else None, args.error, args.task_id))
+        conn.commit()
+        
+        # Notify via Redis
+        redis_client = get_redis()
+        if redis_client:
+            redis_client.publish('tasks:completed', json.dumps({
+                'task_id': args.task_id,
+                'status': status
+            }))
+        
+        print(json.dumps({'status': status, 'task_id': args.task_id}))
+    finally:
+        conn.close()
+    return 0
+
+
+def get_messages(args):
+    """Get messages for an agent."""
+    conn = get_db()
+    try:
+        if args.unread:
+            cursor = conn.execute("""
+                SELECT * FROM agent_mail WHERE to_agent = ? AND read = 0
+                ORDER BY created_at DESC LIMIT ?
+            """, (args.agent, args.limit))
+        else:
+            cursor = conn.execute("""
+                SELECT * FROM agent_mail WHERE to_agent = ?
+                ORDER BY created_at DESC LIMIT ?
+            """, (args.agent, args.limit))
+        
+        messages = []
+        for row in cursor.fetchall():
+            msg = dict(row)
+            msg['payload'] = json.loads(msg['payload']) if msg['payload'] else {}
+            messages.append(msg)
+        
+        print(json.dumps({'messages': messages}, indent=2))
+    finally:
+        conn.close()
+    return 0
+
+
+def submit_approval(args):
+    """Submit a product for human approval before publishing.
+
+    NOTHING gets published without going through this queue.
+    Duplicate submissions (same product_name with pending status) are rejected.
+    """
+    # Ensure approval_queue table exists
+    conn = get_db()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS approval_queue (
+                id TEXT PRIMARY KEY,
+                product_name TEXT NOT NULL,
+                product_type TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                description TEXT NOT NULL,
+                files_path TEXT NOT NULL,
+                preview_url TEXT,
+                price TEXT,
+                submitted_by TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                reviewer_notes TEXT,
+                created_at TEXT NOT NULL,
+                reviewed_at TEXT,
+                published_at TEXT
+            )
+        """)
+        conn.commit()
+    except:
+        pass
+
+    # Check for duplicate pending approval
+    cursor = conn.execute("""
+        SELECT id FROM approval_queue
+        WHERE product_name = ? AND status = 'pending'
+        LIMIT 1
+    """, (args.name,))
+    existing = cursor.fetchone()
+    if existing:
+        result = {
+            'status': 'duplicate_rejected',
+            'existing_approval_id': existing[0],
+            'product_name': args.name,
+            'message': f"Duplicate rejected: '{args.name}' already has a pending approval request."
+        }
+        print(json.dumps(result, indent=2))
+        conn.close()
+        return 1
+
+    item_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+
+    try:
+        conn.execute("""
+            INSERT INTO approval_queue
+            (id, product_name, product_type, platform, description, files_path, preview_url, price, submitted_by, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+        """, (
+            item_id, args.name, args.product_type, args.platform,
+            args.description, args.files_path, args.preview_url, args.price,
+            args.submitted_by, now
+        ))
+
+        # Also post to discussion board
+        conn.execute("""
+            INSERT INTO discussions (id, author, topic, content, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            str(uuid.uuid4()), 'system', 'approvals',
+            f"📋 NEW APPROVAL REQUEST: {args.name} ({args.product_type}) for {args.platform} - submitted by {args.submitted_by}. Waiting for human review.",
+            now
+        ))
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = {
+        'status': 'submitted_for_approval',
+        'approval_id': item_id,
+        'product_name': args.name,
+        'platform': args.platform,
+        'message': 'Product submitted for human approval. Publisher will deploy once approved.'
+    }
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def check_approval(args):
+    """Check if an approval has been granted."""
+    conn = get_db()
+    try:
+        cursor = conn.execute(
+            "SELECT * FROM approval_queue WHERE id = ?", (args.approval_id,)
+        )
+        row = cursor.fetchone()
+        
+        if not row:
+            print(json.dumps({'status': 'not_found', 'approved': False}))
+            return 1
+        
+        item = dict(row)
+        result = {
+            'status': item['status'],
+            'approved': item['status'] == 'approved',
+            'product_name': item['product_name'],
+            'platform': item['platform'],
+            'reviewer_notes': item['reviewer_notes']
+        }
+        print(json.dumps(result, indent=2))
+    finally:
+        conn.close()
+    return 0
+
+
+def list_approvals(args):
+    """List items in the approval queue."""
+    conn = get_db()
+    try:
+        if args.status:
+            cursor = conn.execute(
+                "SELECT * FROM approval_queue WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (args.status, args.limit)
+            )
+        else:
+            cursor = conn.execute(
+                "SELECT * FROM approval_queue ORDER BY created_at DESC LIMIT ?",
+                (args.limit,)
+            )
+
+        items = [dict(row) for row in cursor.fetchall()]
+        print(json.dumps({'approvals': items, 'count': len(items)}, indent=2))
+    finally:
+        conn.close()
+    return 0
+
+
+def submit_project(args):
+    """
+    Submit a project proposal for human approval before building.
+    
+    Contains rich context from Hunter, Critic, and PM for informed decisions.
+    NOTHING gets built without going through this queue.
+    """
+    conn = get_db()
+    try:
+        # Ensure project_proposals table exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS project_proposals (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                hunter_pitch TEXT NOT NULL,
+                hunter_rating INTEGER NOT NULL,
+                market_size TEXT NOT NULL,
+                max_revenue_estimate TEXT NOT NULL,
+                critic_evaluation TEXT NOT NULL,
+                critic_rating INTEGER NOT NULL,
+                cons TEXT NOT NULL,
+                differentiation TEXT NOT NULL,
+                spec_path TEXT NOT NULL,
+                effort_estimate TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                submitted_by TEXT NOT NULL,
+                reviewer_notes TEXT,
+                created_at TEXT NOT NULL,
+                reviewed_at TEXT
+            )
+        """)
+        conn.commit()
+    except:
+        pass
+
+    # Check for duplicate pending proposal
+    cursor = conn.execute("""
+        SELECT id FROM project_proposals
+        WHERE title = ? AND status = 'pending'
+        LIMIT 1
+    """, (args.title,))
+    existing = cursor.fetchone()
+    if existing:
+        result = {
+            'status': 'duplicate_rejected',
+            'existing_proposal_id': existing[0],
+            'title': args.title,
+            'message': f"Duplicate rejected: '{args.title}' already has a pending proposal."
+        }
+        print(json.dumps(result, indent=2))
+        conn.close()
+        return 1
+
+    # Validate ratings
+    hunter_rating = min(10, max(1, args.hunter_rating))
+    critic_rating = min(10, max(1, args.critic_rating))
+
+    proposal_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+
+    try:
+        conn.execute("""
+            INSERT INTO project_proposals
+            (id, title, hunter_pitch, hunter_rating, market_size, max_revenue_estimate,
+             critic_evaluation, critic_rating, cons, differentiation,
+             spec_path, effort_estimate, status, submitted_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        """, (
+            proposal_id, args.title, args.hunter_pitch, hunter_rating,
+            args.market_size, args.max_revenue, args.critic_evaluation,
+            critic_rating, args.cons, args.differentiation,
+            args.spec_path, args.effort, args.submitted_by, now
+        ))
+
+        # Post to discussion board
+        avg_rating = (hunter_rating + critic_rating) / 2
+        conn.execute("""
+            INSERT INTO discussions (id, author, topic, content, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            str(uuid.uuid4()), 'system', 'projects',
+            f"📋 NEW PROJECT PROPOSAL: {args.title} (⭐ {avg_rating}/10) - {args.max_revenue} potential. Submitted by {args.submitted_by}. Waiting for human review.",
+            now
+        ))
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = {
+        'status': 'submitted_for_approval',
+        'proposal_id': proposal_id,
+        'title': args.title,
+        'hunter_rating': hunter_rating,
+        'critic_rating': critic_rating,
+        'combined_rating': (hunter_rating + critic_rating) / 2,
+        'max_revenue': args.max_revenue,
+        'effort': args.effort,
+        'message': 'Project proposal submitted for human approval. Builder will start once approved.'
+    }
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def list_projects(args):
+    """List project proposals in the queue."""
+    conn = get_db()
+    try:
+        if args.status:
+            cursor = conn.execute(
+                "SELECT * FROM project_proposals WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (args.status, args.limit)
+            )
+        else:
+            cursor = conn.execute(
+                "SELECT * FROM project_proposals ORDER BY created_at DESC LIMIT ?",
+                (args.limit,)
+            )
+
+        proposals = []
+        for row in cursor.fetchall():
+            proposal = dict(row)
+            proposal['combined_rating'] = (proposal['hunter_rating'] + proposal['critic_rating']) / 2
+            proposals.append(proposal)
+
+        print(json.dumps({'projects': proposals, 'count': len(proposals)}, indent=2))
+    finally:
+        conn.close()
+    return 0
+
+
+def get_project(args):
+    """Get details of a specific project proposal."""
+    conn = get_db()
+    try:
+        cursor = conn.execute(
+            "SELECT * FROM project_proposals WHERE id = ? OR id LIKE ?",
+            (args.project_id, f"{args.project_id}%")
+        )
+        row = cursor.fetchone()
+        
+        if not row:
+            print(json.dumps({'status': 'not_found', 'message': f'Project not found: {args.project_id}'}))
+            return 1
+        
+        proposal = dict(row)
+        proposal['combined_rating'] = (proposal['hunter_rating'] + proposal['critic_rating']) / 2
+        print(json.dumps({'status': 'found', 'project': proposal}, indent=2))
+    finally:
+        conn.close()
+    return 0
+
+
+def verify_publish(args):
+    """
+    Verify that publishing is allowed for a given task.
+    
+    This is a MANDATORY check before any publish operation.
+    It verifies:
+    1. Task type is 'publish'
+    2. Task has an approval_id in payload
+    3. The approval_id exists and status is 'approved'
+    
+    Returns exit code 0 if verified, 1 if denied.
+    """
+    conn = get_db()
+    try:
+        # Get the task
+        cursor = conn.execute(
+            "SELECT * FROM tasks WHERE id = ? OR id LIKE ?",
+            (args.task_id, f"{args.task_id}%")
+        )
+        row = cursor.fetchone()
+        
+        if not row:
+            print(json.dumps({
+                'verified': False,
+                'error': 'task_not_found',
+                'message': f'Task not found: {args.task_id}'
+            }))
+            return 1
+        
+        task = dict(row)
+        task_type = task['type']
+        payload = json.loads(task['payload']) if task['payload'] else {}
+        
+        # Check 1: Task type must be 'publish'
+        if task_type != 'publish':
+            print(json.dumps({
+                'verified': False,
+                'error': 'wrong_task_type',
+                'message': f'Publishing requires task type "publish", got "{task_type}". DO NOT PUBLISH.',
+                'task_id': task['id']
+            }))
+            return 1
+        
+        # Check 2: Must have approval_id in payload
+        approval_id = payload.get('approval_id')
+        if not approval_id:
+            print(json.dumps({
+                'verified': False,
+                'error': 'missing_approval_id',
+                'message': 'Task payload missing approval_id. This task was not properly approved. DO NOT PUBLISH.',
+                'task_id': task['id']
+            }))
+            return 1
+        
+        # Check 3: Approval must exist and be in 'approved' status
+        cursor = conn.execute(
+            "SELECT status, product_name, platform FROM approval_queue WHERE id = ?",
+            (approval_id,)
+        )
+        approval_row = cursor.fetchone()
+        
+        if not approval_row:
+            print(json.dumps({
+                'verified': False,
+                'error': 'approval_not_found',
+                'message': f'Approval {approval_id} not found in database. DO NOT PUBLISH.',
+                'task_id': task['id'],
+                'approval_id': approval_id
+            }))
+            return 1
+        
+        if approval_row['status'] != 'approved':
+            print(json.dumps({
+                'verified': False,
+                'error': 'approval_not_approved',
+                'message': f'Approval status is "{approval_row["status"]}", not "approved". DO NOT PUBLISH.',
+                'task_id': task['id'],
+                'approval_id': approval_id,
+                'approval_status': approval_row['status']
+            }))
+            return 1
+        
+        # All checks passed!
+        print(json.dumps({
+            'verified': True,
+            'task_id': task['id'],
+            'approval_id': approval_id,
+            'product_name': approval_row['product_name'],
+            'platform': approval_row['platform'],
+            'message': '✅ Publishing verified. You may proceed with rate-limited deployment.'
+        }))
+        return 0
+        
+    finally:
+        conn.close()
+
+
+def cancel_task(args):
+    """Cancel a pending or claimed task."""
+    conn = get_db()
+    try:
+        # Check if task exists and is cancellable
+        cursor = conn.execute(
+            "SELECT id, type, status, payload FROM tasks WHERE id = ? OR id LIKE ?",
+            (args.task_id, f"{args.task_id}%")
+        )
+        row = cursor.fetchone()
+
+        if not row:
+            print(json.dumps({'status': 'error', 'message': f'Task not found: {args.task_id}'}))
+            return 1
+
+        task_id = row['id']
+        task_status = row['status']
+        task_type = row['type']
+
+        if task_status in ('completed', 'cancelled'):
+            print(json.dumps({
+                'status': 'error',
+                'message': f'Cannot cancel task {task_id}: already {task_status}'
+            }))
+            return 1
+
+        # Cancel the task
+        now = datetime.utcnow().isoformat()
+        reason = f"Cancelled by {args.agent or 'meta'}: {args.reason}"
+
+        conn.execute("""
+            UPDATE tasks
+            SET status = 'cancelled',
+                completed_at = ?,
+                error = ?
+            WHERE id = ?
+        """, (now, reason, task_id))
+        conn.commit()
+
+        # Remove from Redis queue if present
+        redis_client = get_redis()
+        if redis_client:
+            redis_client.zrem("task_queue", task_id)
+            redis_client.delete(f"task:{task_id}")
+
+        result = {
+            'status': 'cancelled',
+            'task_id': task_id,
+            'type': task_type,
+            'reason': args.reason
+        }
+        print(json.dumps(result, indent=2))
+    finally:
+        conn.close()
+    return 0
+
+
+def cancel_duplicates(args):
+    """Cancel duplicate pending tasks, keeping the highest priority one."""
+    conn = get_db()
+    try:
+        # Find all pending tasks with this title/identifier
+        title = args.title
+        cursor = conn.execute("""
+            SELECT id, type, priority, created_at, payload FROM tasks
+            WHERE status = 'pending'
+            AND (
+                json_extract(payload, '$.title') = ?
+                OR json_extract(payload, '$.product_name') = ?
+                OR json_extract(payload, '$.name') = ?
+                OR json_extract(payload, '$.product') = ?
+            )
+            ORDER BY priority DESC, created_at ASC
+        """, (title, title, title, title))
+
+        tasks = cursor.fetchall()
+
+        if len(tasks) <= 1:
+            print(json.dumps({
+                'status': 'ok',
+                'message': f'No duplicates found for "{title}"',
+                'cancelled': 0
+            }))
+            return 0
+
+        # Keep the first one (highest priority)
+        keep_id = tasks[0]['id']
+        now = datetime.utcnow().isoformat()
+        cancelled = 0
+
+        for task in tasks[1:]:
+            task_id = task['id']
+            reason = f"Duplicate of {keep_id}"
+
+            conn.execute("""
+                UPDATE tasks
+                SET status = 'cancelled',
+                    completed_at = ?,
+                    error = ?
+                WHERE id = ?
+            """, (now, f"Cancelled by meta: {reason}", task_id))
+            cancelled += 1
+
+        conn.commit()
+
+        result = {
+            'status': 'ok',
+            'title': title,
+            'kept': keep_id,
+            'cancelled': cancelled,
+            'cancelled_ids': [t['id'] for t in tasks[1:]]
+        }
+        print(json.dumps(result, indent=2))
+    finally:
+        conn.close()
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Claude Tasks CLI - Inter-Agent Communication',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
+    
+    # Create task
+    create_parser = subparsers.add_parser('create', help='Create a new task')
+    create_parser.add_argument('--type', '-t', required=True, help='Task type (build_product, deploy, etc)')
+    create_parser.add_argument('--to', required=True, help='Target agent (builder, publisher, etc)')
+    create_parser.add_argument('--from', dest='from_agent', default='system', help='Source agent')
+    create_parser.add_argument('--payload', '-p', default='{}', help='JSON payload')
+    create_parser.add_argument('--priority', type=int, default=5, help='Priority 1-10 (default: 5)')
+    
+    # Send message
+    msg_parser = subparsers.add_parser('message', help='Send message to agent')
+    msg_parser.add_argument('--to', required=True, help='Target agent')
+    msg_parser.add_argument('--from', dest='from_agent', default='system', help='Source agent')
+    msg_parser.add_argument('--type', '-t', default='notify', help='Message type (handoff, request, notify)')
+    msg_parser.add_argument('--payload', '-p', default='{}', help='JSON payload')
+    
+    # List tasks
+    list_parser = subparsers.add_parser('list', help='List tasks')
+    list_parser.add_argument('--status', '-s', help='Filter by status')
+    list_parser.add_argument('--limit', '-l', type=int, default=20, help='Max results')
+    
+    # Claim task
+    claim_parser = subparsers.add_parser('claim', help='Claim next available task')
+    claim_parser.add_argument('--agent', '-a', required=True, help='Agent claiming the task')
+    claim_parser.add_argument('--types', help='Comma-separated task types to claim')
+    
+    # Complete task
+    complete_parser = subparsers.add_parser('complete', help='Mark task as complete')
+    complete_parser.add_argument('--task-id', required=True, help='Task ID')
+    complete_parser.add_argument('--result', '-r', help='Result JSON or string')
+    complete_parser.add_argument('--error', '-e', help='Error message (marks as failed)')
+    
+    # Get messages
+    msgs_parser = subparsers.add_parser('messages', help='Get messages for agent')
+    msgs_parser.add_argument('--agent', '-a', required=True, help='Agent ID')
+    msgs_parser.add_argument('--unread', '-u', action='store_true', help='Only unread')
+    msgs_parser.add_argument('--limit', '-l', type=int, default=20, help='Max results')
+    
+    # Submit for approval (required before publishing)
+    approval_parser = subparsers.add_parser('submit-approval', help='Submit product for human approval')
+    approval_parser.add_argument('--name', '-n', required=True, help='Product name')
+    approval_parser.add_argument('--type', dest='product_type', required=True, help='Product type (template, action, article)')
+    approval_parser.add_argument('--platform', '-p', required=True, help='Target platform (gumroad, github, npm, devto)')
+    approval_parser.add_argument('--description', '-d', required=True, help='What this product does')
+    approval_parser.add_argument('--files', dest='files_path', required=True, help='Path to product files')
+    approval_parser.add_argument('--price', help='Price (e.g. $29)')
+    approval_parser.add_argument('--preview', dest='preview_url', help='Preview URL')
+    approval_parser.add_argument('--from', dest='submitted_by', default='builder', help='Agent submitting')
+    
+    # Check approval status
+    check_parser = subparsers.add_parser('check-approval', help='Check if product is approved')
+    check_parser.add_argument('--id', dest='approval_id', required=True, help='Approval ID')
+    
+    # List approvals
+    approvals_parser = subparsers.add_parser('approvals', help='List approval queue')
+    approvals_parser.add_argument('--status', '-s', help='Filter by status (pending, approved, rejected)')
+    approvals_parser.add_argument('--limit', '-l', type=int, default=20, help='Max results')
+
+    # Submit project for approval (REQUIRED before building)
+    project_parser = subparsers.add_parser('submit-project', help='Submit project proposal for human approval')
+    project_parser.add_argument('--title', '-t', required=True, help='Project title')
+    # Hunter fields
+    project_parser.add_argument('--hunter-pitch', required=True, help='2-3 sentence pitch from Hunter')
+    project_parser.add_argument('--hunter-rating', type=int, required=True, help='Hunter confidence rating 1-10')
+    project_parser.add_argument('--market-size', default='Medium', help='Market size: Small/Medium/Large')
+    project_parser.add_argument('--max-revenue', required=True, help='Max revenue estimate (e.g. "$2000/mo")')
+    # Critic fields
+    project_parser.add_argument('--critic-evaluation', required=True, help='Why Critic thinks this is good')
+    project_parser.add_argument('--critic-rating', type=int, required=True, help='Critic rating 1-10')
+    project_parser.add_argument('--cons', required=True, help='Risks and why it might fail (bullet points)')
+    project_parser.add_argument('--differentiation', required=True, help='What makes this special')
+    # PM fields
+    project_parser.add_argument('--spec-path', required=True, help='Path to PM spec file')
+    project_parser.add_argument('--effort', required=True, help='Effort estimate (e.g. "20 hours")')
+    project_parser.add_argument('--from', dest='submitted_by', default='pm', help='Agent submitting')
+
+    # List projects
+    projects_parser = subparsers.add_parser('projects', help='List project proposals')
+    projects_parser.add_argument('--status', '-s', help='Filter by status (pending, approved, rejected, deferred)')
+    projects_parser.add_argument('--limit', '-l', type=int, default=20, help='Max results')
+
+    # Get project details
+    project_detail_parser = subparsers.add_parser('project', help='Get project proposal details')
+    project_detail_parser.add_argument('--id', dest='project_id', required=True, help='Project ID (or prefix)')
+
+    # Cancel task
+    cancel_parser = subparsers.add_parser('cancel', help='Cancel a pending or claimed task')
+    cancel_parser.add_argument('--task-id', '-t', required=True, help='Task ID (or prefix)')
+    cancel_parser.add_argument('--reason', '-r', required=True, help='Reason for cancellation')
+    cancel_parser.add_argument('--agent', '-a', default='meta', help='Agent cancelling the task')
+
+    # Cancel duplicates
+    dedup_parser = subparsers.add_parser('cancel-duplicates', help='Cancel duplicate tasks by title')
+    dedup_parser.add_argument('--title', '-t', required=True, help='Title to search for duplicates')
+
+    # Verify publish (MANDATORY before any publish operation)
+    verify_parser = subparsers.add_parser('verify-publish', help='Verify publishing is allowed (MANDATORY before publish)')
+    verify_parser.add_argument('--task-id', '-t', required=True, help='Task ID to verify')
+
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        return 1
+    
+    commands = {
+        'create': create_task,
+        'message': send_message,
+        'list': list_tasks,
+        'claim': claim_task,
+        'complete': complete_task,
+        'messages': get_messages,
+        'submit-approval': submit_approval,
+        'check-approval': check_approval,
+        'approvals': list_approvals,
+        'submit-project': submit_project,
+        'projects': list_projects,
+        'project': get_project,
+        'cancel': cancel_task,
+        'cancel-duplicates': cancel_duplicates,
+        'verify-publish': verify_publish
+    }
+    
+    return commands[args.command](args)
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+

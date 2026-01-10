@@ -1,0 +1,62 @@
+# Environment and secrets
+.env
+*.env.local
+.env.*
+!.env.template
+!.env.example
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+terraform/.terraform.lock.hcl
+!terraform/terraform.tfvars.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Data (don't commit generated data)
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# Screenshots
+screenshots/
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+.claude/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+
+# Misc
+*.bak
+*.tmp
+*.temp
+

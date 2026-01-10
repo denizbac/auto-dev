@@ -1,0 +1,338 @@
+# Auto-Dev Configuration
+# Autonomous Software Development System
+# ======================================
+
+# System settings
+agent:
+  name: "Auto-Dev"
+  version: "1.0.0"
+  mode: "parallel"
+
+# GitLab Configuration
+gitlab:
+  # These can be overridden per-repo in the database
+  default_branch: "main"
+  mr_prefix: "[AUTO-DEV]"
+  auto_labels:
+    - "auto-dev"
+    - "needs-review"
+  # Credentials stored in SSM: /auto-dev/{repo-slug}/gitlab-token
+
+# LLM Provider Configuration
+llm:
+  default_provider: "codex"
+  fallback_provider: "claude"
+  auto_fallback_on_rate_limit: true
+  manual_override_env: "AUTODEV_LLM_PROVIDER"
+  providers:
+    codex:
+      command: "codex"
+      prompt_flag: null
+      args:
+        - "exec"
+        - "--json"
+        - "--dangerously-bypass-approvals-and-sandbox"
+        - "--skip-git-repo-check"
+      model_map:
+        primary: "gpt-4.1"
+        fast: "gpt-4.1-mini"
+    claude:
+      command: "claude"
+      prompt_flag: "-p"
+      args:
+        - "--dangerously-skip-permissions"
+        - "--print"
+        - "--tools"
+        - "default"
+        - "--output-format"
+        - "json"
+      model_map:
+        primary: "opus"
+        fast: "sonnet"
+
+# Autonomy Settings
+autonomy:
+  # Global default mode: 'full' or 'guided'
+  # Can be overridden per-repo in database
+  default_mode: "guided"
+
+  # Approval gates (only apply in 'guided' mode)
+  approval_gates:
+    issue_creation: true      # Require approval before creating GitLab issues
+    spec_approval: true       # Require approval before implementation starts
+    merge_approval: true      # Require approval before merging MRs
+    deploy_approval: false    # Auto-deploy if CI passes
+
+  # Auto-approval thresholds (for 'full' mode)
+  auto_approve_thresholds:
+    architect_confidence: 8   # Auto-approve specs if confidence >= 8
+    reviewer_score: 9         # Auto-approve MRs if review score >= 9
+    security_severity: "low"  # Block if severity > low
+    test_coverage: 80         # Require 80%+ coverage
+
+  # Safety limits even in full autonomy
+  safety_limits:
+    max_issues_per_day: 10
+    max_mrs_per_day: 20
+    max_deployments_per_day: 5
+    require_human_for_breaking_changes: true
+    require_human_for_security_fixes: true
+
+# Agent Definitions
+agents:
+  pm:
+    name: "PM"
+    prompt_file: "/auto-dev/config/agents/pm.md"
+    model: "primary"
+    provider: "codex"
+    task_types:
+      - analyze_repo
+      - create_epic
+      - break_down_epic
+      - create_user_story
+      - prioritize_backlog
+      - triage_issue
+    session_max_tokens: 100000
+    description: "Product Manager - defines what to build, creates epics/stories, prioritizes backlog"
+
+  architect:
+    name: "Architect"
+    prompt_file: "/auto-dev/config/agents/architect.md"
+    model: "primary"
+    provider: "codex"
+    task_types:
+      - evaluate_feasibility
+      - write_spec
+      - create_implementation_issue
+    session_max_tokens: 150000
+    description: "Designs solutions, writes specs, creates implementation issues"
+
+  builder:
+    name: "Builder"
+    prompt_file: "/auto-dev/config/agents/builder.md"
+    model: "primary"
+    provider: "codex"
+    task_types:
+      - implement_feature
+      - implement_fix
+      - implement_refactor
+      - address_review_feedback
+    session_max_tokens: 200000
+    description: "Implements features, fixes, and refactors based on specs"
+
+  reviewer:
+    name: "Reviewer"
+    prompt_file: "/auto-dev/config/agents/reviewer.md"
+    model: "primary"
+    provider: "codex"
+    task_types:
+      - review_mr
+    session_max_tokens: 150000
+    description: "Reviews merge requests for quality, bugs, and best practices"
+
+  tester:
+    name: "Tester"
+    prompt_file: "/auto-dev/config/agents/tester.md"
+    model: "primary"
+    provider: "codex"
+    task_types:
+      - write_tests
+      - run_tests
+      - validate_feature
+      - analyze_coverage
+    session_max_tokens: 150000
+    description: "Writes tests, runs test suites, validates features"
+
+  security:
+    name: "Security"
+    prompt_file: "/auto-dev/config/agents/security.md"
+    model: "primary"
+    provider: "codex"
+    task_types:
+      - security_scan
+      - dependency_audit
+      - compliance_check
+    session_max_tokens: 100000
+    description: "Security scanning, vulnerability detection, dependency audits"
+
+  devops:
+    name: "DevOps"
+    prompt_file: "/auto-dev/config/agents/devops.md"
+    model: "fast"
+    provider: "codex"
+    task_types:
+      - manage_pipeline
+      - deploy
+      - rollback
+      - fix_build
+    session_max_tokens: 80000
+    description: "CI/CD management, deployments, pipeline fixes"
+
+  bug_finder:
+    name: "Bug Finder"
+    prompt_file: "/auto-dev/config/agents/bug_finder.md"
+    model: "primary"
+    provider: "codex"
+    task_types:
+      - static_analysis
+      - bug_hunt
+    session_max_tokens: 100000
+    description: "Static analysis, proactive bug detection"
+
+# Database settings (PostgreSQL for multi-tenant)
+database:
+  type: "postgresql"
+  host: "${DB_HOST:-localhost}"
+  port: 5432
+  name: "autodev"
+  user: "${DB_USER:-autodev}"
+  password_env: "DB_PASSWORD"  # Or use SSM: /auto-dev/db/password
+
+# Memory settings
+memory:
+  short_term:
+    database_path: "/auto-dev/data/memory/short_term.db"
+    max_entries: 50
+    prune_on_startup: true
+
+  long_term:
+    host: "localhost"
+    port: 6333
+    collection_name: "autodev_memory"
+    embedding_model: "all-MiniLM-L6-v2"
+    importance_threshold: 5
+
+# Orchestrator settings
+orchestrator:
+  database_path: "/auto-dev/data/orchestrator.db"  # SQLite fallback
+  redis_url: "redis://localhost:6379"
+  file_lock_timeout: 300
+  max_concurrent_agents: 8
+
+# Token budget settings
+tokens:
+  daily_budget: 1000000  # 1M tokens/day
+  session_max: 200000
+  warning_threshold: 0.7
+
+# Workspace settings
+workspace:
+  base_dir: "/auto-dev/data/workspaces"
+  clone_per_task: true  # Fresh clone for each task
+  cleanup_after_days: 7
+
+# Watcher settings
+watcher:
+  restart_delay: 10
+  health_check_interval: 60
+  max_session_duration: 3600
+  log_file: "/auto-dev/logs/watcher.log"
+  session_delay_min: 30
+  session_delay_max: 60
+
+# Dashboard settings
+dashboard:
+  host: "0.0.0.0"
+  port: 8080
+  refresh_interval: 5
+
+# Paths
+paths:
+  workspaces: "/auto-dev/data/workspaces"
+  logs: "/auto-dev/logs"
+  specs: "/auto-dev/data/specs"
+
+# Rate limiting for GitLab
+rate_limits:
+  gitlab:
+    min_delay_seconds: 5
+    max_delay_seconds: 30
+    max_api_calls_per_minute: 60
+
+# Scheduled Jobs
+# Cron expressions: minute hour day month weekday
+# Can be overridden per-repo in database
+scheduling:
+  enabled: true
+  timezone: "UTC"
+
+  jobs:
+    # Bug Finder - nightly static analysis
+    bug_finder_nightly:
+      agent: "bug_finder"
+      task_type: "static_analysis"
+      cron: "0 2 * * *"  # 2 AM daily
+      enabled: true
+      description: "Nightly static analysis and bug hunt"
+
+    # Security - weekly dependency audit
+    security_dependency_audit:
+      agent: "security"
+      task_type: "dependency_audit"
+      cron: "0 3 * * 0"  # 3 AM Sunday
+      enabled: true
+      description: "Weekly dependency vulnerability scan"
+
+    # Security - weekly compliance check
+    security_compliance:
+      agent: "security"
+      task_type: "compliance_check"
+      cron: "0 4 * * 0"  # 4 AM Sunday
+      enabled: true
+      description: "Weekly compliance verification"
+
+    # PM - backlog grooming
+    pm_backlog_review:
+      agent: "pm"
+      task_type: "prioritize_backlog"
+      cron: "0 9 * * 1"  # 9 AM Monday
+      enabled: true
+      description: "Weekly backlog prioritization"
+
+    # PM - tech debt analysis (optional)
+    pm_repo_analysis:
+      agent: "pm"
+      task_type: "analyze_repo"
+      cron: "0 6 1 * *"  # 6 AM first of month
+      enabled: false  # Enable per-repo if needed
+      description: "Monthly repository health check"
+
+# Webhook Triggers
+# Maps GitLab webhook events to agent tasks
+webhook_triggers:
+  # Issue events
+  "issue:open":
+    agent: "pm"
+    task_type: "triage_issue"
+    condition: "not has_label('auto-dev')"  # Only human-created issues
+
+  # Merge Request events
+  "merge_request:open":
+    parallel:
+      - agent: "reviewer"
+        task_type: "review_mr"
+      - agent: "security"
+        task_type: "security_scan"
+      - agent: "tester"
+        task_type: "run_tests"
+
+  "merge_request:update":
+    agent: "reviewer"
+    task_type: "review_mr"
+    condition: "has_new_commits"
+
+  "merge_request:merge":
+    agent: "devops"
+    task_type: "deploy"
+    condition: "target_branch in ['main', 'master', 'production']"
+
+  # Pipeline events
+  "pipeline:failed":
+    agent: "devops"
+    task_type: "fix_build"
+
+  # Note events (comments)
+  "note:merge_request":
+    agent: "builder"
+    task_type: "address_review_feedback"
+    condition: "is_review_comment and mentions_changes_needed"

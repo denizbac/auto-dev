@@ -1,0 +1,40 @@
+[Unit]
+Description=Auto-Dev Agent Supervisor
+Documentation=https://github.com/your-org/auto-dev
+After=network.target postgresql.service redis.service autodev-dashboard.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=autodev
+Group=autodev
+WorkingDirectory=/auto-dev
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/auto-dev/venv/bin:/usr/local/bin:/usr/bin
+EnvironmentFile=-/auto-dev/.env
+
+ExecStart=/auto-dev/venv/bin/python -m watcher.supervisor --all-agents
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=always
+RestartSec=30
+StartLimitInterval=300
+StartLimitBurst=5
+
+# Allow longer startup for agent initialization
+TimeoutStartSec=120
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/auto-dev/data /auto-dev/logs
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=autodev-supervisor
+
+[Install]
+WantedBy=multi-user.target

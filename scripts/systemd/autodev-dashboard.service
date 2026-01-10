@@ -1,0 +1,37 @@
+[Unit]
+Description=Auto-Dev Dashboard
+Documentation=https://github.com/your-org/auto-dev
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=autodev
+Group=autodev
+WorkingDirectory=/auto-dev
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/auto-dev/venv/bin:/usr/local/bin:/usr/bin
+EnvironmentFile=-/auto-dev/.env
+
+ExecStart=/auto-dev/venv/bin/python -m dashboard.server
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=always
+RestartSec=10
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/auto-dev/data /auto-dev/logs
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=autodev-dashboard
+
+[Install]
+WantedBy=multi-user.target
