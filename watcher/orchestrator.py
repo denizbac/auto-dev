@@ -283,7 +283,7 @@ class Orchestrator:
     
     def __init__(
         self,
-        db_path: str = "/autonomous-claude/data/orchestrator.db",
+        db_path: str = "/auto-dev/data/orchestrator.db",
         redis_url: Optional[str] = None,
         lock_timeout_seconds: int = 300  # 5 minutes default lock
     ):
@@ -2270,7 +2270,7 @@ _orchestrator: Optional[Orchestrator] = None
 
 
 def get_orchestrator(
-    db_path: str = "/autonomous-claude/data/orchestrator.db",
+    db_path: str = "/auto-dev/data/orchestrator.db",
     redis_url: Optional[str] = None
 ) -> Orchestrator:
     """Get or create the global orchestrator instance."""

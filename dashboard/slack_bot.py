@@ -71,15 +71,15 @@ def get_ssm_parameter(name: str) -> Optional[str]:
 
 
 def get_signing_secret() -> str:
-    return get_ssm_parameter("/autonomous-claude/slack/signing_secret") or ""
+    return get_ssm_parameter("/auto-dev/slack/signing_secret") or ""
 
 
 def get_bot_token() -> str:
-    return get_ssm_parameter("/autonomous-claude/slack/bot_token") or ""
+    return get_ssm_parameter("/auto-dev/slack/bot_token") or ""
 
 
 def get_allowed_users() -> set:
-    users = get_ssm_parameter("/autonomous-claude/slack/allowed_users") or ""
+    users = get_ssm_parameter("/auto-dev/slack/allowed_users") or ""
     return set(u.strip() for u in users.split(",") if u.strip())
 
 
@@ -181,7 +181,7 @@ def cmd_status() -> str:
     agents_running = 0
     agents_stopped = 0
     agents_paused = 0
-    status_dir = Path("/autonomous-claude/data")
+    status_dir = Path("/auto-dev/data")
     for f in status_dir.glob("watcher_status_*.json"):
         try:
             data = json.loads(f.read_text())
@@ -197,7 +197,7 @@ def cmd_status() -> str:
     # Get currently claimed tasks
     claimed = []
     try:
-        conn = sqlite3.connect("/autonomous-claude/data/orchestrator.db")
+        conn = sqlite3.connect("/auto-dev/data/orchestrator.db")
         conn.row_factory = sqlite3.Row
         cursor = conn.execute("""
             SELECT assigned_to, type, payload FROM tasks 
@@ -279,7 +279,7 @@ def cmd_cancel(task_id: str) -> str:
     
     # Find task by partial ID
     import sqlite3
-    conn = sqlite3.connect("/autonomous-claude/data/orchestrator.db")
+    conn = sqlite3.connect("/auto-dev/data/orchestrator.db")
     cursor = conn.execute("SELECT id, type, status FROM tasks WHERE id LIKE ?", (f"{task_id}%",))
     rows = cursor.fetchall()
     conn.close()
@@ -307,7 +307,7 @@ def cmd_priority(task_id: str, priority: int) -> str:
         return "Priority must be between 1 and 10."
     
     import sqlite3
-    conn = sqlite3.connect("/autonomous-claude/data/orchestrator.db")
+    conn = sqlite3.connect("/auto-dev/data/orchestrator.db")
     cursor = conn.execute("SELECT id, type FROM tasks WHERE id LIKE ? AND status = 'pending'", (f"{task_id}%",))
     rows = cursor.fetchall()
     
@@ -327,7 +327,7 @@ def cmd_priority(task_id: str, priority: int) -> str:
 def cmd_agents() -> str:
     """Show agent statuses."""
     import json
-    status_dir = Path("/autonomous-claude/data")
+    status_dir = Path("/auto-dev/data")
     
     lines = ["*Agent Status:*", "```"]
     lines.append(f"{'Agent':<12} {'Status':<10} {'Rate Limit':<12} {'Task'}")
@@ -479,7 +479,7 @@ def cmd_projects(status: str = "pending") -> str:
     import sqlite3
     
     try:
-        conn = sqlite3.connect("/autonomous-claude/data/orchestrator.db")
+        conn = sqlite3.connect("/auto-dev/data/orchestrator.db")
         conn.row_factory = sqlite3.Row
         
         cursor = conn.execute("""
@@ -529,7 +529,7 @@ def cmd_project_detail(project_id: str) -> str:
     import sqlite3
     
     try:
-        conn = sqlite3.connect("/autonomous-claude/data/orchestrator.db")
+        conn = sqlite3.connect("/auto-dev/data/orchestrator.db")
         conn.row_factory = sqlite3.Row
         
         cursor = conn.execute(
@@ -600,7 +600,7 @@ def cmd_approve_project(project_id: str) -> str:
     from datetime import datetime
     
     try:
-        conn = sqlite3.connect("/autonomous-claude/data/orchestrator.db")
+        conn = sqlite3.connect("/auto-dev/data/orchestrator.db")
         conn.row_factory = sqlite3.Row
         
         now = datetime.utcnow().isoformat()
@@ -669,7 +669,7 @@ def cmd_reject_project(project_id: str, reason: str) -> str:
     from datetime import datetime
     
     try:
-        conn = sqlite3.connect("/autonomous-claude/data/orchestrator.db")
+        conn = sqlite3.connect("/auto-dev/data/orchestrator.db")
         conn.row_factory = sqlite3.Row
         
         now = datetime.utcnow().isoformat()
@@ -717,7 +717,7 @@ def cmd_defer_project(project_id: str) -> str:
     from datetime import datetime
     
     try:
-        conn = sqlite3.connect("/autonomous-claude/data/orchestrator.db")
+        conn = sqlite3.connect("/auto-dev/data/orchestrator.db")
         conn.row_factory = sqlite3.Row
         
         now = datetime.utcnow().isoformat()
@@ -764,7 +764,7 @@ def cmd_logs(agent: str, lines: int = 20) -> str:
     if agent not in valid_agents:
         return f"Unknown agent `{agent}`. Valid: {', '.join(valid_agents)}"
     
-    log_file = Path(f"/autonomous-claude/logs/{agent}.log")
+    log_file = Path(f"/auto-dev/logs/{agent}.log")
     if not log_file.exists():
         return f"No log file found for `{agent}`"
     
@@ -848,7 +848,7 @@ def cmd_ask(question: str, response_url: str = None) -> str:
         # Get agent info
         agents_running = 0
         agents_paused = 0
-        status_dir = Path("/autonomous-claude/data")
+        status_dir = Path("/auto-dev/data")
         for f in status_dir.glob("watcher_status_*.json"):
             try:
                 data = json.loads(f.read_text())
@@ -860,7 +860,7 @@ def cmd_ask(question: str, response_url: str = None) -> str:
                 pass
         
         # Get current tasks
-        conn = sqlite3.connect("/autonomous-claude/data/orchestrator.db")
+        conn = sqlite3.connect("/auto-dev/data/orchestrator.db")
         conn.row_factory = sqlite3.Row
         
         # Currently working on
@@ -900,7 +900,7 @@ def cmd_ask(question: str, response_url: str = None) -> str:
         # Check for rate limit
         rate_limited = False
         rate_reset = None
-        rate_file = Path("/autonomous-claude/data/.rate_limited")
+        rate_file = Path("/auto-dev/data/.rate_limited")
         if rate_file.exists():
             try:
                 rl_data = json.loads(rate_file.read_text())

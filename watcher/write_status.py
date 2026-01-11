@@ -19,4 +19,4 @@ def write_status(state, config):
             'remaining': config['tokens']['daily_budget'] - state.total_tokens_today
         }
     }
-    Path('/autonomous-claude/data/watcher_status.json').write_text(json.dumps(status))
+    Path('/auto-dev/data/watcher_status.json').write_text(json.dumps(status))

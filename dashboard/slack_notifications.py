@@ -50,13 +50,13 @@ def get_ssm_parameter(name: str) -> Optional[str]:
 
 
 def get_bot_token() -> str:
-    return get_ssm_parameter("/autonomous-claude/slack/bot_token") or ""
+    return get_ssm_parameter("/auto-dev/slack/bot_token") or ""
 
 
 def get_notification_channel() -> str:
     """Get the channel to post notifications to."""
     # Try SSM first, fall back to default
-    channel = get_ssm_parameter("/autonomous-claude/slack/notification_channel")
+    channel = get_ssm_parameter("/auto-dev/slack/notification_channel")
     if channel:
         return channel
     # Default to general or the first channel the bot is in

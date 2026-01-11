@@ -49,14 +49,14 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('/autonomous-claude/logs/watcher.log')
+        logging.FileHandler('/auto-dev/logs/watcher.log')
     ]
 )
 logger = logging.getLogger('watcher')
 
 SSM_REGION = os.environ.get("AWS_REGION", "us-east-1")
-APIFY_SSM_PARAM = "/autonomous-claude/apify/api_key"
-OPENAI_SSM_PARAM = "/autonomous-claude/openai/api_key"
+APIFY_SSM_PARAM = "/auto-dev/apify/api_key"
+OPENAI_SSM_PARAM = "/auto-dev/openai/api_key"
 
 
 def _load_ssm_param(name: str, region: str = SSM_REGION) -> Optional[str]:
@@ -109,7 +109,7 @@ class WatcherState:
 
 
 # Shared rate limit file - all agents check this
-RATE_LIMIT_FILE = Path('/autonomous-claude/data/.rate_limited')
+RATE_LIMIT_FILE = Path('/auto-dev/data/.rate_limited')
 
 
 class ClaudeWorkerProcess:
@@ -306,7 +306,7 @@ class AutonomousClaudeWatcher:
     
     def __init__(
         self,
-        config_path: str = '/autonomous-claude/config/settings.yaml',
+        config_path: str = '/auto-dev/config/settings.yaml',
         agent_id: str = 'master'
     ):
         """
@@ -334,7 +334,7 @@ class AutonomousClaudeWatcher:
         # Initialize orchestrator for multi-agent coordination
         orchestrator_config = self.config.get('orchestrator', {})
         self.orchestrator = get_orchestrator(
-            db_path=orchestrator_config.get('database_path', '/autonomous-claude/data/orchestrator.db'),
+            db_path=orchestrator_config.get('database_path', '/auto-dev/data/orchestrator.db'),
             redis_url=orchestrator_config.get('redis_url')
         )
         
@@ -427,7 +427,7 @@ class AutonomousClaudeWatcher:
         # Default config for master agent
         return {
             'name': 'Master',
-            'prompt_file': '/autonomous-claude/config/master_prompt.md',
+            'prompt_file': '/auto-dev/config/master_prompt.md',
             'task_types': None,
             'session_max_tokens': self.config['tokens'].get('session_max', 200000),
             'description': 'General-purpose autonomous agent'
@@ -437,7 +437,7 @@ class AutonomousClaudeWatcher:
         """Get the prompt file path for this agent."""
         return self.agent_config.get(
             'prompt_file',
-            '/autonomous-claude/config/master_prompt.md'
+            '/auto-dev/config/master_prompt.md'
         )
     
     def _handle_shutdown(self, signum, frame):
@@ -602,7 +602,7 @@ If this task should be handed off to another agent, indicate that clearly with t
 
             self.worker = ClaudeWorkerProcess(
                 prompt_path=self._get_prompt_path(),
-                working_dir='/autonomous-claude/data/projects',
+                working_dir='/auto-dev/data/projects',
                 agent_id=self.agent_id,
                 task_context=task_context,
                 provider=provider,
@@ -918,7 +918,7 @@ If this task should be handed off to another agent, indicate that clearly with t
         max_concurrent = self.config.get('orchestrator', {}).get('max_concurrent_agents', 10)
         
         # Count currently working agents from status files
-        status_dir = Path('/autonomous-claude/data')
+        status_dir = Path('/auto-dev/data')
         working_count = 0
         
         for status_file in status_dir.glob('watcher_status_*.json'):
@@ -1044,7 +1044,7 @@ If this task should be handed off to another agent, indicate that clearly with t
     def _write_status_file(self) -> None:
         """Write current status to file for dashboard."""
         status = self.get_status()
-        status_path = Path(f'/autonomous-claude/data/watcher_status_{self.agent_id}.json')
+        status_path = Path(f'/auto-dev/data/watcher_status_{self.agent_id}.json')
         try:
             status_path.write_text(json.dumps(status, default=str))
         except Exception as e:
@@ -1052,7 +1052,7 @@ If this task should be handed off to another agent, indicate that clearly with t
         
         # Also write combined status for backward compatibility
         if self.agent_id == 'master':
-            combined_path = Path('/autonomous-claude/data/watcher_status.json')
+            combined_path = Path('/auto-dev/data/watcher_status.json')
             try:
                 combined_path.write_text(json.dumps(status, default=str))
             except Exception:
@@ -1128,7 +1128,7 @@ Examples:
     )
     parser.add_argument(
         '--config', '-c',
-        default='/autonomous-claude/config/settings.yaml',
+        default='/auto-dev/config/settings.yaml',
         help='Path to configuration file'
     )
     return parser.parse_args()
