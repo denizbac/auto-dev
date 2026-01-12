@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Autonomous Claude Dashboard Server
-===================================
+Auto-Dev Dashboard Server
+=========================
 
 Real-time monitoring dashboard for the autonomous income agent.
 Shows activity streams, income tracking, token usage, and memory stats.
@@ -475,26 +475,37 @@ async def create_task(request: Request):
     conn = get_orchestrator_db()
     if not conn:
         return {"status": "error", "message": "Orchestrator database not available"}
-    
+
     try:
         import uuid
         task_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
-        
+
+        # Extract repo_id and assigned_to from the request
+        repo_id = data.get('repo_id')
+        assigned_to = data.get('to')  # Agent to assign task to
+
+        # Include repo_id in payload if provided
+        payload = data.get('payload', {})
+        if repo_id:
+            payload['repo_id'] = repo_id
+
         conn.execute("""
-            INSERT INTO tasks (id, type, priority, payload, status, created_by, created_at)
-            VALUES (?, ?, ?, ?, 'pending', ?, ?)
+            INSERT INTO tasks (id, type, priority, payload, status, created_by, created_at, assigned_to, repo_id)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
         """, (
             task_id,
             data.get('type', 'build_product'),
             data.get('priority', 5),
-            json.dumps(data.get('payload', {})),
+            json.dumps(payload),
             data.get('created_by', 'dashboard'),
-            now
+            now,
+            assigned_to,
+            repo_id
         ))
         conn.commit()
-        
-        return {"status": "created", "task_id": task_id}
+
+        return {"status": "created", "task_id": task_id, "repo_id": repo_id, "assigned_to": assigned_to}
     finally:
         conn.close()
 
@@ -650,6 +661,44 @@ async def get_agent_providers():
         })
 
     return {"providers": providers, "default_provider": default_provider}
+
+
+@app.get("/api/agent-config")
+async def get_agent_config():
+    """Get agent definitions from settings.yaml for dynamic UI rendering."""
+    config_data = load_config()
+    agents_config = config_data.get("agents", {})
+
+    # Map agent types to icons
+    AGENT_ICONS = {
+        "pm": "📋",
+        "architect": "📐",
+        "builder": "🔨",
+        "reviewer": "🔍",
+        "tester": "🧪",
+        "security": "🛡️",
+        "devops": "⚙️",
+        "bug_finder": "🐛",
+        # Legacy agent icons for backwards compatibility
+        "hunter": "🔍",
+        "critic": "🧐",
+        "publisher": "🚀",
+        "meta": "🧠",
+    }
+
+    agents = []
+    for agent_id, agent_cfg in agents_config.items():
+        agents.append({
+            "id": agent_id,
+            "name": agent_cfg.get("name", agent_id.title()),
+            "description": agent_cfg.get("description", ""),
+            "icon": AGENT_ICONS.get(agent_id, "🤖"),
+            "task_types": agent_cfg.get("task_types", []),
+            "model": agent_cfg.get("model", "primary"),
+            "provider": agent_cfg.get("provider"),
+        })
+
+    return {"agents": agents}
 
 
 @app.post("/api/agent/provider/{agent_type}")
@@ -1337,7 +1386,7 @@ AGENTS_PAGE_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Agent Activity - Autonomous Claude Swarm</title>
+    <title>Agent Activity - Auto-Dev</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -1498,8 +1547,9 @@ AGENTS_PAGE_HTML = """
         <h1>🤖 Agent Activity</h1>
         <div class="nav-links">
             <a href="/">Dashboard</a>
-            <a href="/projects">Projects</a>
-            <a href="/agents" class="active">Agent Tasks</a>
+            <a href="/repos">Repositories</a>
+            <a href="/projects">Approvals</a>
+            <a href="/agents" class="active">Agents</a>
         </div>
     </div>
     
@@ -1659,7 +1709,7 @@ PROJECTS_PAGE_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Project Approvals - Autonomous Claude Swarm</title>
+    <title>Pending Approvals - Auto-Dev</title>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -2012,8 +2062,9 @@ PROJECTS_PAGE_HTML = """
         <h1>📋 Project Approvals</h1>
         <div class="nav-links">
             <a href="/">Dashboard</a>
-            <a href="/projects" class="active">Projects</a>
-            <a href="/agents">Agent Tasks</a>
+            <a href="/repos">Repositories</a>
+            <a href="/projects" class="active">Approvals</a>
+            <a href="/agents">Agents</a>
         </div>
     </div>
     
@@ -2953,7 +3004,7 @@ DASHBOARD_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Autonomous Claude Dashboard</title>
+    <title>Auto-Dev Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -3555,11 +3606,12 @@ DASHBOARD_HTML = """
         <header>
             <div class="logo">
                 <div class="logo-icon">🤖</div>
-                <h1>Autonomous Claude</h1>
+                <h1>Auto-Dev</h1>
             </div>
             <div class="nav-links" style="display: flex; gap: 1.5rem; margin-right: 2rem;">
                 <a href="/" style="color: var(--accent-green); text-decoration: none;">Dashboard</a>
-                <a href="/projects" style="color: var(--text-secondary); text-decoration: none;">Projects</a>
+                <a href="/repos" style="color: var(--text-secondary); text-decoration: none;">Repositories</a>
+                <a href="/projects" style="color: var(--text-secondary); text-decoration: none;">Approvals</a>
                 <a href="/agents" style="color: var(--text-secondary); text-decoration: none;">Agents</a>
             </div>
             <div class="header-controls">
@@ -3582,103 +3634,9 @@ DASHBOARD_HTML = """
             <span>📋 Tasks: <strong id="taskCount">0</strong> pending</span>
         </div>
         
-        <!-- Agent Status Cards -->
-        <div class="agent-cards" id="agentCards" style="grid-template-columns: repeat(6, 1fr);">
-            <div class="agent-card" data-agent="hunter">
-                <div class="agent-header">
-                    <span class="agent-icon">🔍</span>
-                    <span class="agent-name">Hunter</span>
-                    <span class="agent-status-dot offline" id="hunter-dot"></span>
-                </div>
-                <div class="agent-role">Opportunity Scanner</div>
-                <div class="agent-stats">
-                    <span>Tasks: <strong id="hunter-tasks">0</strong></span>
-                </div>
-                <div class="agent-actions">
-                    <button class="agent-btn start" onclick="startSpecificAgent('hunter')">▶</button>
-                    <button class="agent-btn stop" onclick="stopSpecificAgent('hunter')">⏹</button>
-                </div>
-            </div>
-            
-            <div class="agent-card" data-agent="critic">
-                <div class="agent-header">
-                    <span class="agent-icon">🧐</span>
-                    <span class="agent-name">Critic</span>
-                    <span class="agent-status-dot offline" id="critic-dot"></span>
-                </div>
-                <div class="agent-role">Idea Evaluator</div>
-                <div class="agent-stats">
-                    <span>Tasks: <strong id="critic-tasks">0</strong></span>
-                </div>
-                <div class="agent-actions">
-                    <button class="agent-btn start" onclick="startSpecificAgent('critic')">▶</button>
-                    <button class="agent-btn stop" onclick="stopSpecificAgent('critic')">⏹</button>
-                </div>
-            </div>
-            
-            <div class="agent-card" data-agent="builder">
-                <div class="agent-header">
-                    <span class="agent-icon">🔨</span>
-                    <span class="agent-name">Builder</span>
-                    <span class="agent-status-dot offline" id="builder-dot"></span>
-                </div>
-                <div class="agent-role">Product Creator</div>
-                <div class="agent-stats">
-                    <span>Tasks: <strong id="builder-tasks">0</strong></span>
-                </div>
-                <div class="agent-actions">
-                    <button class="agent-btn start" onclick="startSpecificAgent('builder')">▶</button>
-                    <button class="agent-btn stop" onclick="stopSpecificAgent('builder')">⏹</button>
-                </div>
-            </div>
-            
-            <div class="agent-card" data-agent="tester">
-                <div class="agent-header">
-                    <span class="agent-icon">🧪</span>
-                    <span class="agent-name">Tester</span>
-                    <span class="agent-status-dot offline" id="tester-dot"></span>
-                </div>
-                <div class="agent-role">QA Validation</div>
-                <div class="agent-stats">
-                    <span>Tasks: <strong id="tester-tasks">0</strong></span>
-                </div>
-                <div class="agent-actions">
-                    <button class="agent-btn start" onclick="startSpecificAgent('tester')">▶</button>
-                    <button class="agent-btn stop" onclick="stopSpecificAgent('tester')">⏹</button>
-                </div>
-            </div>
-            
-            <div class="agent-card" data-agent="publisher">
-                <div class="agent-header">
-                    <span class="agent-icon">🚀</span>
-                    <span class="agent-name">Publisher</span>
-                    <span class="agent-status-dot offline" id="publisher-dot"></span>
-                </div>
-                <div class="agent-role">Deploy & Market</div>
-                <div class="agent-stats">
-                    <span>Tasks: <strong id="publisher-tasks">0</strong></span>
-                </div>
-                <div class="agent-actions">
-                    <button class="agent-btn start" onclick="startSpecificAgent('publisher')">▶</button>
-                    <button class="agent-btn stop" onclick="stopSpecificAgent('publisher')">⏹</button>
-                </div>
-            </div>
-            
-            <div class="agent-card" data-agent="meta" style="border-color: var(--accent-purple);">
-                <div class="agent-header">
-                    <span class="agent-icon">🧠</span>
-                    <span class="agent-name">Meta</span>
-                    <span class="agent-status-dot offline" id="meta-dot"></span>
-                </div>
-                <div class="agent-role">Swarm Architect</div>
-                <div class="agent-stats">
-                    <span>Tasks: <strong id="meta-tasks">0</strong></span>
-                </div>
-                <div class="agent-actions">
-                    <button class="agent-btn start" onclick="startSpecificAgent('meta')">▶</button>
-                    <button class="agent-btn stop" onclick="stopSpecificAgent('meta')">⏹</button>
-                </div>
-            </div>
+        <!-- Agent Status Cards - dynamically loaded from settings.yaml -->
+        <div class="agent-cards" id="agentCards">
+            <div class="empty-state">Loading agents...</div>
         </div>
 
         <div class="panel provider-panel">
@@ -3713,7 +3671,21 @@ DASHBOARD_HTML = """
                 <div class="card-subtitle" id="sessionDuration">0h runtime</div>
             </div>
         </div>
-        
+
+        <!-- Repository Summary Widget -->
+        <div class="panel" style="margin-bottom: 24px;">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <span>📁</span>
+                    Repositories
+                </div>
+                <a href="/repos" style="font-size: 12px; color: var(--accent-blue); text-decoration: none;">View All →</a>
+            </div>
+            <div class="panel-content" id="repoSummary" style="max-height: 200px; overflow-y: auto;">
+                <div class="empty-state">Loading repositories...</div>
+            </div>
+        </div>
+
         <!-- Swarm Discussion Panel -->
         <div class="panel" style="margin-bottom: 24px;">
             <div class="panel-header">
@@ -3826,10 +3798,10 @@ DASHBOARD_HTML = """
                 <span style="font-size: 12px; color: var(--text-muted);">Send work directly to an agent</span>
             </div>
             <div class="panel-content" style="padding: 16px;">
-                <div style="display: grid; grid-template-columns: 1fr 150px 80px; gap: 12px; align-items: end;">
+                <div style="display: grid; grid-template-columns: 1fr 180px 150px 80px; gap: 12px; align-items: end;">
                     <div>
                         <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Task Description</label>
-                        <input type="text" id="taskDescription" placeholder="e.g., Build a CLI tool for..." style="
+                        <input type="text" id="taskDescription" placeholder="e.g., Add feature X to handle Y..." style="
                             width: 100%;
                             padding: 10px 14px;
                             background: var(--bg-secondary);
@@ -3838,6 +3810,21 @@ DASHBOARD_HTML = """
                             color: var(--text-primary);
                             font-size: 14px;
                         ">
+                    </div>
+                    <div>
+                        <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Target Repository</label>
+                        <select id="taskRepo" style="
+                            width: 100%;
+                            padding: 10px 14px;
+                            background: var(--bg-secondary);
+                            border: 1px solid var(--border-color);
+                            border-radius: 8px;
+                            color: var(--text-primary);
+                            font-size: 14px;
+                        ">
+                            <option value="">Global / All Repos</option>
+                            <!-- Populated dynamically from /api/repos -->
+                        </select>
                     </div>
                     <div>
                         <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Assign To</label>
@@ -3850,12 +3837,7 @@ DASHBOARD_HTML = """
                             color: var(--text-primary);
                             font-size: 14px;
                         ">
-                            <option value="hunter">🔍 Hunter</option>
-                            <option value="builder">🏗️ Builder</option>
-                            <option value="critic">🧐 Critic</option>
-                            <option value="tester">🧪 Tester</option>
-                            <option value="publisher">📢 Publisher</option>
-                            <option value="meta">🧠 Meta</option>
+                            <!-- Populated dynamically from /api/agent-config -->
                         </select>
                     </div>
                     <div>
@@ -4719,12 +4701,13 @@ DASHBOARD_HTML = """
             const description = document.getElementById('taskDescription').value.trim();
             const agent = document.getElementById('taskAgent').value;
             const priority = parseInt(document.getElementById('taskPriority').value);
-            
+            const repoId = document.getElementById('taskRepo').value || null;
+
             if (!description) {
                 alert('Please enter a task description');
                 return;
             }
-            
+
             try {
                 const response = await fetch(`${API_BASE}/api/tasks`, {
                     method: 'POST',
@@ -4733,17 +4716,20 @@ DASHBOARD_HTML = """
                         type: 'directive',
                         to: agent,
                         priority: priority,
+                        repo_id: repoId,
                         payload: {
                             instruction: description,
                             from: 'human',
-                            urgent: priority >= 9
+                            urgent: priority >= 9,
+                            repo_id: repoId
                         }
                     })
                 });
-                
+
                 const data = await response.json();
                 if (data.task_id) {
-                    alert(`✅ Task sent to ${agent.toUpperCase()}!`);
+                    const repoText = repoId ? ` (Repo: ${repoId})` : '';
+                    alert(`✅ Task sent to ${agent.toUpperCase()}!${repoText}`);
                     document.getElementById('taskDescription').value = '';
                     fetchTasks();
                 } else {
@@ -4753,8 +4739,123 @@ DASHBOARD_HTML = """
                 alert(`Error: ${error.message}`);
             }
         }
-        
+
+        // Load agent cards dynamically from settings.yaml
+        async function loadAgentCards() {
+            try {
+                const response = await fetch(`${API_BASE}/api/agent-config`);
+                const data = await response.json();
+                const container = document.getElementById('agentCards');
+
+                if (!data.agents || data.agents.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No agents configured</div>';
+                    return;
+                }
+
+                // Calculate grid columns based on agent count
+                const cols = Math.min(data.agents.length, 8);
+                container.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+
+                container.innerHTML = data.agents.map(agent => `
+                    <div class="agent-card" data-agent="${agent.id}">
+                        <div class="agent-header">
+                            <span class="agent-icon">${agent.icon}</span>
+                            <span class="agent-name">${agent.name}</span>
+                            <span class="agent-status-dot offline" id="${agent.id}-dot"></span>
+                        </div>
+                        <div class="agent-role">${agent.description.substring(0, 40)}${agent.description.length > 40 ? '...' : ''}</div>
+                        <div class="agent-stats">
+                            <span>Tasks: <strong id="${agent.id}-tasks">0</strong></span>
+                        </div>
+                        <div class="agent-actions">
+                            <button class="agent-btn start" onclick="startSpecificAgent('${agent.id}')">▶</button>
+                            <button class="agent-btn stop" onclick="stopSpecificAgent('${agent.id}')">⏹</button>
+                        </div>
+                    </div>
+                `).join('');
+
+                // Update agent count
+                document.getElementById('agentCount').textContent = data.agents.length;
+            } catch (error) {
+                console.error('Error loading agent cards:', error);
+            }
+        }
+
+        // Populate agent dropdown in task form
+        async function loadTaskAgentDropdown() {
+            try {
+                const response = await fetch(`${API_BASE}/api/agent-config`);
+                const data = await response.json();
+                const select = document.getElementById('taskAgent');
+
+                if (!data.agents || data.agents.length === 0) return;
+
+                select.innerHTML = data.agents.map(agent =>
+                    `<option value="${agent.id}">${agent.icon} ${agent.name}</option>`
+                ).join('');
+            } catch (error) {
+                console.error('Error loading task agent dropdown:', error);
+            }
+        }
+
+        // Populate repo dropdown in task form
+        async function loadTaskRepoDropdown() {
+            try {
+                const response = await fetch(`${API_BASE}/api/repos`);
+                const data = await response.json();
+                const select = document.getElementById('taskRepo');
+
+                select.innerHTML = '<option value="">Global / All Repos</option>';
+                if (data.repos && data.repos.length > 0) {
+                    select.innerHTML += data.repos.map(repo =>
+                        `<option value="${repo.id}">${repo.name}</option>`
+                    ).join('');
+                }
+            } catch (error) {
+                console.error('Error loading repo dropdown:', error);
+            }
+        }
+
+        // Load repository summary for dashboard widget
+        async function loadRepoSummary() {
+            try {
+                const response = await fetch(`${API_BASE}/api/repos`);
+                const data = await response.json();
+                const container = document.getElementById('repoSummary');
+
+                if (!data.repos || data.repos.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No repositories configured. <a href="/repos" style="color: var(--accent-blue);">Add one →</a></div>';
+                    return;
+                }
+
+                container.innerHTML = data.repos.slice(0, 5).map(repo => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-color);">
+                        <div>
+                            <div style="font-weight: 600; color: var(--text-primary);">${repo.name}</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">${repo.url || repo.gitlab_path || ''}</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <span style="font-size: 11px; padding: 2px 8px; background: ${repo.autonomy_mode === 'full' ? 'var(--accent-green-dim)' : 'var(--bg-secondary)'}; border-radius: 4px; color: ${repo.autonomy_mode === 'full' ? 'var(--accent-green)' : 'var(--text-secondary)'};">
+                                ${repo.autonomy_mode || 'guided'}
+                            </span>
+                        </div>
+                    </div>
+                `).join('');
+
+                if (data.repos.length > 5) {
+                    container.innerHTML += `<div style="text-align: center; padding: 8px; font-size: 12px; color: var(--text-muted);">+${data.repos.length - 5} more repositories</div>`;
+                }
+            } catch (error) {
+                console.error('Error loading repo summary:', error);
+                document.getElementById('repoSummary').innerHTML = '<div class="empty-state">Error loading repositories</div>';
+            }
+        }
+
         // Initial load
+        loadAgentCards();
+        loadTaskAgentDropdown();
+        loadTaskRepoDropdown();
+        loadRepoSummary();
         fetchStats();
         fetchActivities();
         fetchScreenshots();

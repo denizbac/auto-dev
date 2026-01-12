@@ -1,6 +1,6 @@
 """
-Autonomous Claude Dashboard Package
-====================================
+Auto-Dev Dashboard Package
+==========================
 
 Provides the FastAPI-based monitoring dashboard.
 """

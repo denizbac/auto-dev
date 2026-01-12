@@ -1,6 +1,6 @@
 """
-Slack Bot Service for Autonomous Claude Swarm
-=============================================
+Slack Bot Service for Auto-Dev
+==============================
 
 Provides slash command interface to control the swarm from Slack.
 

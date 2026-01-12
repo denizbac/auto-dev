@@ -1,6 +1,6 @@
 """
-Slack Notifications for Autonomous Claude Swarm
-================================================
+Slack Notifications for Auto-Dev
+================================
 
 Sends proactive notifications to Slack for important events:
 - Rate limit hit
