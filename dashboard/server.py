@@ -38,6 +38,12 @@ app = FastAPI(title="Auto-Dev Dashboard", version="2.0.0")
 # Register routers
 app.include_router(repos_router)
 
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Docker/load balancer."""
+    return {"status": "healthy", "service": "dashboard", "version": "2.0.0"}
+
 # Configuration
 CONFIG_PATH = Path("/auto-dev/config/settings.yaml")
 DB_PATH = Path("/auto-dev/data/memory/short_term.db")

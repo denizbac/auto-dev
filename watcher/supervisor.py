@@ -333,9 +333,11 @@ class AutonomousClaudeWatcher:
         
         # Initialize orchestrator for multi-agent coordination
         orchestrator_config = self.config.get('orchestrator', {})
+        # Prefer REDIS_URL from environment (for Docker), fall back to config
+        redis_url = os.environ.get('REDIS_URL') or orchestrator_config.get('redis_url')
         self.orchestrator = get_orchestrator(
             db_path=orchestrator_config.get('database_path', '/auto-dev/data/orchestrator.db'),
-            redis_url=orchestrator_config.get('redis_url')
+            redis_url=redis_url
         )
         
         # Setup signal handlers

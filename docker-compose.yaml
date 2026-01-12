@@ -54,9 +54,9 @@ services:
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/6333'"]
+      interval: 10s
+      timeout: 5s
       retries: 3
 
   redis:
@@ -168,11 +168,17 @@ services:
       - AUTODEV_LLM_PROVIDER=${AUTODEV_LLM_PROVIDER:-codex}
     volumes:
       - ./config:/auto-dev/config:ro
+      - ./watcher:/auto-dev/watcher:ro
+      - ./integrations:/auto-dev/integrations:ro
+      - ./dashboard:/auto-dev/dashboard:ro
       - ./data:/auto-dev/data
       - ./logs:/auto-dev/logs
-      # Mount codex/claude CLI if available on host
-      - ${CODEX_PATH:-/usr/local/bin/codex}:/usr/local/bin/codex:ro
-      - ${CLAUDE_PATH:-/usr/local/bin/claude}:/usr/local/bin/claude:ro
+      # Mount codex CLI and credentials from host
+      # The codex script is at /usr/bin/codex and expects vendor at /usr/vendor/
+      - /usr/bin/codex:/usr/bin/codex:ro
+      - /usr/lib/node_modules/@openai/codex/vendor:/usr/vendor:ro
+      # Codex needs write access to its config dir for skills and state
+      - /home/ubuntu/.codex:/home/autodev/.codex:rw
     depends_on:
       postgres:
         condition: service_healthy
@@ -180,7 +186,7 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_healthy
-    command: ["python", "-m", "watcher.supervisor", "--all-agents"]
+    command: ["python", "-m", "watcher.supervisor", "--agent", "pm"]
 
   # =============================================================================
   # Development/Optional Services
