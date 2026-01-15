@@ -1,56 +1,69 @@
 # Auto-Dev - Operations Guide
 
-This document explains how to manage the autonomous AI swarm running on EC2.
+This document explains how to manage the autonomous AI swarm running on **AWS ECS (Fargate)**.
 
 ## Quick Reference
 
 ```bash
-# === CONNECTION ===
-cd terraform && terraform output          # Get EC2 info
-ssh -i ~/.ssh/<key>.pem ubuntu@<EC2_IP>   # SSH in
-
-# === AGENT MANAGEMENT (on EC2) ===
-cd /auto-dev
-./scripts/start_agents.sh status    # Check all agents
-./scripts/start_agents.sh           # Start all agents
-./scripts/start_agents.sh stop      # Stop all agents
-./scripts/start_agents.sh pm        # Start specific agent
-tmux attach -t claude-pm        # View live (Ctrl+B, D to detach)
-tail -f logs/pm.log             # View logs
-
-# === AWS CLI ===
-aws ec2 start-instances --instance-ids <ID>   # Start EC2
-aws ec2 stop-instances --instance-ids <ID>    # Stop EC2 (saves $)
-aws ssm get-parameters-by-path --path "/auto-dev" --query "Parameters[].Name"
-
 # === DASHBOARD ===
-http://<EC2_IP>:8080
+http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com
+
+# === DEPLOY CODE CHANGES ===
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev
+docker build --platform linux/amd64 -t 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest .
+docker push 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest
+
+# Redeploy all services
+for svc in auto-dev-dashboard auto-dev-pm auto-dev-architect auto-dev-builder auto-dev-reviewer auto-dev-tester auto-dev-security auto-dev-devops auto-dev-bug_finder; do
+  aws ecs update-service --cluster auto-dev --service $svc --force-new-deployment --region us-east-1
+done
+
+# === VIEW LOGS (CloudWatch) ===
+aws logs tail /ecs/auto-dev --follow                          # All logs
+aws logs tail /ecs/auto-dev --follow --filter-pattern "pm"    # Filter by agent
+
+# === CHECK STATUS ===
+aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-east-1 | jq '.services[0].deployments'
+
+# === AWS SSM (Credentials) ===
+aws ssm get-parameters-by-path --path "/auto-dev" --query "Parameters[].Name"
 ```
 
 ---
 
-## 1. Connecting to EC2
+## 1. ECS Infrastructure
 
 ### Get Connection Details
 
 ```bash
-cd /Users/denizbac/Dev/auto-claude/terraform
+cd terraform
 terraform output
 ```
 
 Output:
 ```
-dashboard_url = "http://X.X.X.X:8080"
-public_ip = "X.X.X.X"
-ssh_command = "ssh -i ~/.ssh/your-key.pem ubuntu@X.X.X.X"
+alb_dns_name = "auto-dev-alb-588827158.us-east-1.elb.amazonaws.com"
+dashboard_url = "http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com"
+ecr_repository_url = "569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev"
+ecs_cluster_name = "auto-dev"
+cloudwatch_log_group = "/ecs/auto-dev"
 ```
 
-### SSH In
+### ECS Services
 
-```bash
-# Use the ssh_command from terraform output
-ssh -i ~/.ssh/<your-key>.pem ubuntu@<EC2_IP>
-```
+| Service | Purpose |
+|---------|---------|
+| auto-dev-dashboard | Web UI and API |
+| auto-dev-pm | Product Manager agent |
+| auto-dev-architect | Architect agent |
+| auto-dev-builder | Builder agent |
+| auto-dev-reviewer | Reviewer agent |
+| auto-dev-tester | Tester agent |
+| auto-dev-security | Security agent |
+| auto-dev-devops | DevOps agent |
+| auto-dev-bug_finder | Bug Finder agent |
+| auto-dev-postgres | PostgreSQL database |
+| auto-dev-redis | Redis for coordination |
 
 ---
 
@@ -59,91 +72,69 @@ ssh -i ~/.ssh/<your-key>.pem ubuntu@<EC2_IP>
 ### Check Status
 
 ```bash
-cd /auto-dev
-./scripts/start_agents.sh status
-```
+# List all services
+aws ecs list-services --cluster auto-dev --region us-east-1 | jq -r '.serviceArns[]'
 
-Output:
-```
-═══════════════════════════════════════════════════════════════
-                    AGENT STATUS
-═══════════════════════════════════════════════════════════════
+# Check specific service status
+aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-east-1 | jq '.services[0] | {name: .serviceName, running: .runningCount, desired: .desiredCount}'
 
-AGENT           STATUS     SESSION
-───────────────────────────────────────────────────────────────
-pm              RUNNING    claude-pm
-architect       RUNNING    claude-architect
-builder         RUNNING    claude-builder
-reviewer        RUNNING    claude-reviewer
-tester          RUNNING    claude-tester
-security        RUNNING    claude-security
-devops          RUNNING    claude-devops
-bug_finder      RUNNING    claude-bug_finder
-```
-
-### Start Agents
-
-```bash
-# Start all agents
-./scripts/start_agents.sh
-
-# Start specific agent
-./scripts/start_agents.sh pm
-./scripts/start_agents.sh architect
-./scripts/start_agents.sh builder
-```
-
-### Stop Agents
-
-```bash
-# Stop all agents
-./scripts/start_agents.sh stop
-
-# Stop specific agent
-./scripts/start_agents.sh stop pm
+# Check all agents at once
+for svc in auto-dev-pm auto-dev-architect auto-dev-builder auto-dev-reviewer auto-dev-tester auto-dev-security auto-dev-devops auto-dev-bug_finder; do
+  aws ecs describe-services --cluster auto-dev --services $svc --region us-east-1 | jq -r '.services[0] | "\(.serviceName): \(.runningCount)/\(.desiredCount)"'
+done
 ```
 
 ### Restart Agent
 
 ```bash
-./scripts/start_agents.sh stop pm
-./scripts/start_agents.sh pm
+# Force redeploy a specific agent
+aws ecs update-service --cluster auto-dev --service auto-dev-pm --force-new-deployment --region us-east-1
+
+# Restart all agents
+for svc in auto-dev-pm auto-dev-architect auto-dev-builder auto-dev-reviewer auto-dev-tester auto-dev-security auto-dev-devops auto-dev-bug_finder; do
+  aws ecs update-service --cluster auto-dev --service $svc --force-new-deployment --region us-east-1
+done
+```
+
+### Scale Agent
+
+```bash
+# Scale down (stop agent)
+aws ecs update-service --cluster auto-dev --service auto-dev-pm --desired-count 0 --region us-east-1
+
+# Scale up (start agent)
+aws ecs update-service --cluster auto-dev --service auto-dev-pm --desired-count 1 --region us-east-1
 ```
 
 ---
 
 ## 3. Viewing Agent Activity
 
-### Attach to Live Session
-
-Each agent runs in a tmux session. You can watch them work in real-time:
+### CloudWatch Logs
 
 ```bash
-# Attach to agent session
-tmux attach -t claude-pm
+# Live tail all logs
+aws logs tail /ecs/auto-dev --follow --region us-east-1
 
-# Detach (keep agent running): Ctrl+B, then D
-# Kill session (stops agent): Ctrl+C
+# Filter by agent
+aws logs tail /ecs/auto-dev --follow --filter-pattern "pm" --region us-east-1
+aws logs tail /ecs/auto-dev --follow --filter-pattern "builder" --region us-east-1
+
+# Search for errors
+aws logs tail /ecs/auto-dev --filter-pattern "ERROR" --since 1h --region us-east-1
+
+# Get specific log stream
+aws logs describe-log-streams --log-group-name /ecs/auto-dev --order-by LastEventTime --descending --limit 10 --region us-east-1 | jq -r '.logStreams[].logStreamName'
 ```
 
-### View Logs
+### Get Recent Logs for Agent
 
 ```bash
-# Live tail
-tail -f /auto-dev/logs/pm.log
+# List PM agent log streams
+aws logs describe-log-streams --log-group-name /ecs/auto-dev --log-stream-name-prefix "pm/" --order-by LastEventTime --descending --limit 3 --region us-east-1
 
-# Last 100 lines
-tail -100 /auto-dev/logs/builder.log
-
-# Search logs
-grep "ERROR" /auto-dev/logs/*.log
-grep "income" /auto-dev/logs/*.log
-```
-
-### List All tmux Sessions
-
-```bash
-tmux ls
+# Get log events from a specific stream
+aws logs get-log-events --log-group-name /ecs/auto-dev --log-stream-name "pm/pm/<task-id>" --limit 50 --region us-east-1 | jq -r '.events[].message'
 ```
 
 ---
@@ -152,31 +143,20 @@ tmux ls
 
 ### Access
 
-```bash
-# Get URL
-cd terraform && terraform output dashboard_url
-```
-
-Open in browser: `http://<EC2_IP>:8080`
+Dashboard URL: `http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com`
 
 ### Dashboard Features
 
 - **Agent Status**: See which agents are running
 - **Task Queue**: Pending, in-progress, completed tasks
-- **Approval Queue**: Products waiting for human review
-- **Income Tracking**: Revenue by source
-- **Memory Viewer**: Recent agent memories
+- **Approval Queue**: Specs and MRs waiting for human review
+- **Repository Management**: Add/configure GitLab repos
+- **Send Instructions**: Direct commands to agents
 
 ### Restart Dashboard
 
 ```bash
-# Via systemd
-sudo systemctl restart autodev-dashboard
-
-# Or manually
-cd /auto-dev/dashboard
-source ../venv/bin/activate
-python server.py
+aws ecs update-service --cluster auto-dev --service auto-dev-dashboard --force-new-deployment --region us-east-1
 ```
 
 ---
@@ -315,109 +295,107 @@ curl -X POST http://localhost:8080/api/approvals/<id>/reject \
 
 ## 8. Deploying Code Changes
 
-### From Local to EC2
+### Build and Push Docker Image
 
 ```bash
-# Option 1: rsync
-rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' \
-  --exclude 'data' --exclude 'logs' --exclude '*.pyc' \
-  -e "ssh -i ~/.ssh/<key>.pem" \
-  /Users/denizbac/Dev/auto-claude/ \
-  ubuntu@<EC2_IP>:/auto-dev/
+# Login to ECR
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev
 
-# Option 2: Use deploy script (if configured)
-./scripts/deploy.sh
+# Build for linux/amd64 (ECS uses x86)
+docker build --platform linux/amd64 -t 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest .
+
+# Push to ECR
+docker push 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest
 ```
 
-### After Deployment
+### Redeploy Services
 
 ```bash
-# SSH into EC2
-ssh -i ~/.ssh/<key>.pem ubuntu@<EC2_IP>
+# Redeploy a specific service
+aws ecs update-service --cluster auto-dev --service auto-dev-pm --force-new-deployment --region us-east-1
 
-# Restart agents to pick up changes
-cd /auto-dev
-./scripts/start_agents.sh stop
-./scripts/start_agents.sh
+# Redeploy all services (recommended after code changes)
+for svc in auto-dev-dashboard auto-dev-pm auto-dev-architect auto-dev-builder auto-dev-reviewer auto-dev-tester auto-dev-security auto-dev-devops auto-dev-bug_finder auto-dev-webhook auto-dev-scheduler; do
+  echo "Redeploying $svc..."
+  aws ecs update-service --cluster auto-dev --service $svc --force-new-deployment --region us-east-1 | jq -r '.service.serviceName'
+done
 ```
 
-### Deploy Specific Files
+### Verify Deployment
 
 ```bash
-# Just agent prompts
-scp -i ~/.ssh/<key>.pem config/agents/*.md ubuntu@<EC2_IP>:/auto-dev/config/agents/
+# Check deployment status
+aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-east-1 | jq '.services[0].deployments | map({status, runningCount, desiredCount})'
 
-# Just watcher code
-scp -i ~/.ssh/<key>.pem watcher/*.py ubuntu@<EC2_IP>:/auto-dev/watcher/
+# Check for errors in events
+aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-east-1 | jq -r '.services[0].events[0:3][] | .message'
+
+# Watch logs for the new deployment
+aws logs tail /ecs/auto-dev --follow --filter-pattern "pm" --region us-east-1
 ```
 
 ---
 
 ## 9. Troubleshooting
 
-### Agent Won't Start
+### Agent Won't Start / Task Not Running
 
 ```bash
-# Check Claude CLI auth
-claude auth status
+# Check service events for errors
+aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-east-1 | jq -r '.services[0].events[0:5][] | .message'
 
-# If not authenticated:
-claude auth login
+# Check task status
+TASK_ARN=$(aws ecs list-tasks --cluster auto-dev --service-name auto-dev-pm --region us-east-1 | jq -r '.taskArns[0]')
+aws ecs describe-tasks --cluster auto-dev --tasks $TASK_ARN --region us-east-1 | jq '.tasks[0] | {lastStatus, stoppedReason, healthStatus}'
 
-# Check for errors in logs
-tail -50 /auto-dev/logs/<agent>.log
-
-# Check Python dependencies
-source venv/bin/activate
-pip install -r requirements.txt
+# Check CloudWatch logs for errors
+aws logs tail /ecs/auto-dev --filter-pattern "ERROR" --since 30m --region us-east-1
 ```
 
-### Qdrant Not Running
+### Image Pull Errors (Platform Mismatch)
+
+If you see `CannotPullContainerError: image Manifest does not contain descriptor matching platform 'linux/amd64'`:
 
 ```bash
-# Check Docker
-docker ps | grep qdrant
+# Rebuild with correct platform
+docker build --platform linux/amd64 -t 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest .
+docker push 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest
 
-# Restart Qdrant
-docker restart qdrant
-
-# Check Qdrant logs
-docker logs qdrant
+# Force redeploy
+aws ecs update-service --cluster auto-dev --service auto-dev-pm --force-new-deployment --region us-east-1
 ```
 
-### Out of Memory
+### Task Keeps Stopping
 
 ```bash
-# Check memory
-free -h
+# Check stopped reason
+aws ecs describe-tasks --cluster auto-dev --tasks $(aws ecs list-tasks --cluster auto-dev --service-name auto-dev-pm --desired-status STOPPED --region us-east-1 | jq -r '.taskArns[0]') --region us-east-1 | jq '.tasks[0].stoppedReason'
 
-# Clear old logs
-rm /auto-dev/logs/*.log
-
-# Restart agents with fresh state
-./scripts/start_agents.sh stop
-./scripts/start_agents.sh
-```
-
-### Agent Stuck
-
-```bash
-# Kill and restart specific agent
-./scripts/start_agents.sh stop pm
-./scripts/start_agents.sh pm
+# Check container exit code
+aws ecs describe-tasks --cluster auto-dev --tasks <task-arn> --region us-east-1 | jq '.tasks[0].containers[] | {name, exitCode, reason}'
 ```
 
 ### Dashboard 502/Connection Refused
 
 ```bash
-# Check if running
-sudo systemctl status autodev-dashboard
+# Check ALB target health
+aws elbv2 describe-target-health --target-group-arn $(aws elbv2 describe-target-groups --names auto-dev-dashboard-tg --region us-east-1 | jq -r '.TargetGroups[0].TargetGroupArn') --region us-east-1
 
-# Check port
-sudo lsof -i :8080
+# Restart dashboard service
+aws ecs update-service --cluster auto-dev --service auto-dev-dashboard --force-new-deployment --region us-east-1
 
-# Restart
-sudo systemctl restart autodev-dashboard
+# Check dashboard logs
+aws logs tail /ecs/auto-dev --follow --filter-pattern "dashboard" --region us-east-1
+```
+
+### Database Connection Issues
+
+```bash
+# Check if postgres service is running
+aws ecs describe-services --cluster auto-dev --services auto-dev-postgres --region us-east-1 | jq '.services[0] | {running: .runningCount, desired: .desiredCount}'
+
+# Check postgres logs
+aws logs tail /ecs/auto-dev --filter-pattern "postgres" --since 10m --region us-east-1
 ```
 
 ---
@@ -530,31 +508,27 @@ aws configure
 # Enter: Access Key, Secret Key, Region (us-east-1), Output (json)
 ```
 
-### EC2 Instance Control
+### ECS Service Control
 
 ```bash
-# Get instance ID from terraform
-cd terraform && terraform output instance_id
+# List all ECS services
+aws ecs list-services --cluster auto-dev --region us-east-1 | jq -r '.serviceArns[]'
 
-# Check instance status
-aws ec2 describe-instance-status --instance-ids <INSTANCE_ID>
+# Check service status
+aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-east-1 | jq '.services[0] | {name: .serviceName, running: .runningCount, desired: .desiredCount, status: .status}'
 
-# Quick status check
-aws ec2 describe-instances --instance-ids <INSTANCE_ID> \
-  --query 'Reservations[0].Instances[0].State.Name' --output text
+# Scale down all agents (SAVES MONEY when not using!)
+for svc in auto-dev-pm auto-dev-architect auto-dev-builder auto-dev-reviewer auto-dev-tester auto-dev-security auto-dev-devops auto-dev-bug_finder; do
+  aws ecs update-service --cluster auto-dev --service $svc --desired-count 0 --region us-east-1
+done
 
-# Start instance
-aws ec2 start-instances --instance-ids <INSTANCE_ID>
+# Scale up all agents
+for svc in auto-dev-pm auto-dev-architect auto-dev-builder auto-dev-reviewer auto-dev-tester auto-dev-security auto-dev-devops auto-dev-bug_finder; do
+  aws ecs update-service --cluster auto-dev --service $svc --desired-count 1 --region us-east-1
+done
 
-# Stop instance (SAVES MONEY when not using!)
-aws ec2 stop-instances --instance-ids <INSTANCE_ID>
-
-# Reboot instance
-aws ec2 reboot-instances --instance-ids <INSTANCE_ID>
-
-# Get current public IP
-aws ec2 describe-instances --instance-ids <INSTANCE_ID> \
-  --query 'Reservations[0].Instances[0].PublicIpAddress' --output text
+# Force restart a service
+aws ecs update-service --cluster auto-dev --service auto-dev-pm --force-new-deployment --region us-east-1
 ```
 
 ### SSM Parameter Store (Credentials)
@@ -594,40 +568,6 @@ aws ssm get-parameter --name "/auto-dev/gumroad/email" \
   --query "Parameter.Name" --output text 2>/dev/null && echo "EXISTS" || echo "MISSING"
 ```
 
-### Security Groups
-
-```bash
-# Get security group ID
-cd terraform && terraform output security_group_id
-
-# List current rules
-aws ec2 describe-security-groups \
-  --group-ids <SG_ID> \
-  --query "SecurityGroups[0].IpPermissions"
-
-# Add your IP for SSH access
-MY_IP=$(curl -s ifconfig.me)
-aws ec2 authorize-security-group-ingress \
-  --group-id <SG_ID> \
-  --protocol tcp \
-  --port 22 \
-  --cidr ${MY_IP}/32
-
-# Add your IP for dashboard access
-aws ec2 authorize-security-group-ingress \
-  --group-id <SG_ID> \
-  --protocol tcp \
-  --port 8080 \
-  --cidr ${MY_IP}/32
-
-# Remove overly permissive rule
-aws ec2 revoke-security-group-ingress \
-  --group-id <SG_ID> \
-  --protocol tcp \
-  --port 8080 \
-  --cidr 0.0.0.0/0
-```
-
 ### Cost Management
 
 ```bash
@@ -635,14 +575,21 @@ aws ec2 revoke-security-group-ingress \
 aws ce get-cost-and-usage \
   --time-period Start=$(date -v1d +%Y-%m-%d),End=$(date +%Y-%m-%d) \
   --granularity MONTHLY \
-  --metrics BlendedCost
+  --metrics BlendedCost \
+  --region us-east-1
 
-# Instance cost breakdown
+# ECS/Fargate cost breakdown
 aws ce get-cost-and-usage \
   --time-period Start=$(date -v-7d +%Y-%m-%d),End=$(date +%Y-%m-%d) \
   --granularity DAILY \
-  --filter '{"Dimensions":{"Key":"SERVICE","Values":["Amazon Elastic Compute Cloud - Compute"]}}' \
-  --metrics BlendedCost
+  --filter '{"Dimensions":{"Key":"SERVICE","Values":["Amazon Elastic Container Service"]}}' \
+  --metrics BlendedCost \
+  --region us-east-1
+
+# Scale down to save money (keeps dashboard/postgres/redis)
+for svc in auto-dev-pm auto-dev-architect auto-dev-builder auto-dev-reviewer auto-dev-tester auto-dev-security auto-dev-devops auto-dev-bug_finder; do
+  aws ecs update-service --cluster auto-dev --service $svc --desired-count 0 --region us-east-1
+done
 ```
 
 ### Terraform Commands
@@ -673,25 +620,42 @@ terraform destroy
 ### Quick Health Check
 
 ```bash
-# All agents running?
-./scripts/start_agents.sh status
+# Check all agent services are running
+for svc in auto-dev-pm auto-dev-architect auto-dev-builder auto-dev-reviewer auto-dev-tester auto-dev-security auto-dev-devops auto-dev-bug_finder; do
+  aws ecs describe-services --cluster auto-dev --services $svc --region us-east-1 | jq -r '.services[0] | "\(.serviceName): \(.runningCount)/\(.desiredCount)"'
+done
 
-# Recent errors?
-grep -i error logs/*.log | tail -20
+# Check for recent errors in CloudWatch
+aws logs tail /ecs/auto-dev --filter-pattern "ERROR" --since 1h --region us-east-1
 
-# Tasks processing?
-./bin/claude-tasks list --status pending | wc -l
+# Check dashboard health
+curl -s http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com/health | jq .
 
-# Income generated?
-# Check dashboard or:
-sqlite3 data/memory/short_term.db "SELECT * FROM income_log ORDER BY id DESC LIMIT 10;"
+# Check pending tasks via API
+curl -s http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com/api/tasks?status=pending | jq '.tasks | length'
 ```
 
-### Set Up Alerts (Optional)
+### CloudWatch Alarms (Optional)
+
+You can set up CloudWatch alarms for:
+- ECS service running count < desired count
+- High error rate in logs
+- ALB unhealthy targets
 
 ```bash
-# Simple cron check - add to crontab
-*/5 * * * * /auto-dev/scripts/health_check.sh >> /var/log/claude-health.log
+# Example: Create alarm for PM agent not running
+aws cloudwatch put-metric-alarm \
+  --alarm-name "auto-dev-pm-not-running" \
+  --metric-name CPUUtilization \
+  --namespace AWS/ECS \
+  --dimensions Name=ServiceName,Value=auto-dev-pm Name=ClusterName,Value=auto-dev \
+  --statistic Average \
+  --period 300 \
+  --evaluation-periods 2 \
+  --threshold 0 \
+  --comparison-operator LessThanOrEqualToThreshold \
+  --alarm-actions <SNS_TOPIC_ARN> \
+  --region us-east-1
 ```
 
 ---
@@ -699,40 +663,40 @@ sqlite3 data/memory/short_term.db "SELECT * FROM income_log ORDER BY id DESC LIM
 ## Summary Commands
 
 ```bash
-# === GET EC2 INFO ===
-cd terraform && terraform output
+# === DASHBOARD ===
+http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com
 
-# === SSH INTO EC2 ===
-ssh -i ~/.ssh/<key>.pem ubuntu@<IP>
+# === DEPLOY CODE CHANGES ===
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev
+docker build --platform linux/amd64 -t 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest .
+docker push 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest
+# Redeploy services
+for svc in auto-dev-dashboard auto-dev-pm auto-dev-architect auto-dev-builder auto-dev-reviewer auto-dev-tester auto-dev-security auto-dev-devops auto-dev-bug_finder; do
+  aws ecs update-service --cluster auto-dev --service $svc --force-new-deployment --region us-east-1
+done
 
-# === AGENT MANAGEMENT (on EC2) ===
-./scripts/start_agents.sh status        # Check status
-./scripts/start_agents.sh               # Start all
-./scripts/start_agents.sh stop          # Stop all
-./scripts/start_agents.sh pm            # Start one
+# === VIEW LOGS ===
+aws logs tail /ecs/auto-dev --follow --region us-east-1               # All logs
+aws logs tail /ecs/auto-dev --follow --filter-pattern "pm"            # Filter by agent
+aws logs tail /ecs/auto-dev --filter-pattern "ERROR" --since 1h       # Errors
 
-# === VIEW AGENT ACTIVITY ===
-tmux attach -t claude-pm            # Live view (Ctrl+B,D to detach)
-tail -f logs/pm.log                 # View logs
-http://<IP>:8080                        # Dashboard
+# === CHECK STATUS ===
+aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-east-1 | jq '.services[0] | {running: .runningCount, desired: .desiredCount}'
 
-# === TASK MANAGEMENT ===
-./bin/claude-tasks list                 # View tasks
-./bin/claude-swarm status               # Swarm health
+# === RESTART AGENT ===
+aws ecs update-service --cluster auto-dev --service auto-dev-pm --force-new-deployment --region us-east-1
 
-# === AWS: EC2 CONTROL ===
-aws ec2 start-instances --instance-ids <ID>   # Start instance
-aws ec2 stop-instances --instance-ids <ID>    # Stop (saves $$$)
-aws ec2 describe-instances --instance-ids <ID> --query 'Reservations[0].Instances[0].State.Name'
+# === SCALE AGENT ===
+aws ecs update-service --cluster auto-dev --service auto-dev-pm --desired-count 0 --region us-east-1  # Stop
+aws ecs update-service --cluster auto-dev --service auto-dev-pm --desired-count 1 --region us-east-1  # Start
 
-# === AWS: CREDENTIALS ===
+# === AWS SSM (Credentials) ===
 aws ssm get-parameters-by-path --path "/auto-dev" --query "Parameters[].Name"
 aws ssm put-parameter --name "/auto-dev/key" --value "val" --type SecureString --overwrite
 aws ssm get-parameter --name "/auto-dev/key" --with-decryption --query "Parameter.Value"
 
-# === DEPLOY CHANGES ===
-rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' \
-  -e "ssh -i ~/.ssh/<key>.pem" . ubuntu@<IP>:/auto-dev/
-# Then on EC2:
-./scripts/start_agents.sh stop && ./scripts/start_agents.sh
+# === TERRAFORM ===
+cd terraform && terraform output                    # Get infrastructure info
+cd terraform && terraform plan                      # Preview changes
+cd terraform && terraform apply                     # Apply changes
 ```

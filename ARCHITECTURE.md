@@ -2,11 +2,11 @@
 
 ## Overview
 
-Auto-Dev is an autonomous software development system that uses 8 specialized AI agents to develop software on GitLab repositories. The system runs on AWS EC2 with Docker containers for each agent, using PostgreSQL for coordination and Qdrant for long-term memory.
+Auto-Dev is an autonomous software development system that uses 8 specialized AI agents to develop software on GitLab repositories. The system runs on **AWS ECS (Fargate)** with each agent as a separate service, using PostgreSQL for coordination and Redis for agent control.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              AWS EC2 INSTANCE                                   │
+│                              AWS ECS CLUSTER                                    │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                 │
 │  ┌─────────────────────────────────────────────────────────────────────────┐   │
@@ -395,66 +395,97 @@ tail -f logs/pm.log                 # View logs
 
 ```
 AWS Resources:
-├── EC2 Instance (t3.xlarge)
-│   ├── Ubuntu 22.04
-│   ├── 100GB gp3 EBS
-│   └── Security Group (SSH + 8080)
+├── ECS Cluster (Fargate)
+│   ├── 8 Agent Services (PM, Architect, Builder, Reviewer, Tester, Security, DevOps, Bug Finder)
+│   ├── Dashboard Service
+│   ├── Webhook Service
+│   └── Scheduler Service
+│
+├── Application Load Balancer (ALB)
+│   └── Routes traffic to Dashboard
+│
+├── ECR Repository
+│   └── auto-dev:latest Docker image
+│
+├── EFS File System
+│   └── Shared storage for agent workspaces
+│
+├── Service Discovery (Cloud Map)
+│   └── autodev.local namespace
+│       ├── postgres.autodev.local
+│       └── redis.autodev.local
 │
 ├── SSM Parameter Store
 │   └── /auto-dev/{repo-slug}/
 │       └── gitlab-token
 │
-├── Docker Services
-│   ├── PostgreSQL (primary database)
-│   ├── Redis (coordination)
-│   ├── Qdrant (vector memory)
-│   └── 8 Agent containers
+├── ECS Services (supporting)
+│   ├── PostgreSQL
+│   └── Redis
 │
 └── GitLab Webhooks (external)
 ```
 
-### Cost Breakdown
+### Cost Breakdown (ECS Fargate)
 
 | Component | Monthly Cost |
 |-----------|-------------|
-| EC2 t3.xlarge | ~$120 |
-| EBS 100GB gp3 | ~$8 |
+| ECS Fargate (11 tasks) | ~$150-200 |
+| ALB | ~$20 |
+| EFS | ~$10 |
+| CloudWatch Logs | ~$5 |
 | Data transfer | ~$5-10 |
 | Codex Pro | $200 |
-| **Total** | **~$335/month** |
+| **Total** | **~$400-450/month** |
 
 ---
 
 ## Quick Reference
 
-### Start/Stop Agents
+### Deploy Changes to ECS
 ```bash
-./scripts/start_agents.sh           # Start all
-./scripts/start_agents.sh status    # Check status
-./scripts/start_agents.sh stop      # Stop all
-./scripts/start_agents.sh pm        # Start one
+# Build and push Docker image
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev
+docker build --platform linux/amd64 -t 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest .
+docker push 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest
+
+# Redeploy all services
+for svc in auto-dev-dashboard auto-dev-pm auto-dev-architect auto-dev-builder auto-dev-reviewer auto-dev-tester auto-dev-security auto-dev-devops auto-dev-bug_finder; do
+  aws ecs update-service --cluster auto-dev --service $svc --force-new-deployment --region us-east-1
+done
 ```
 
 ### View Agent Activity
 ```bash
-tmux attach -t claude-pm            # Live view (Ctrl+B, D to detach)
-tail -f logs/pm.log                 # Tail logs
+# CloudWatch Logs
+aws logs tail /ecs/auto-dev --follow --filter-pattern "pm"
+
+# List recent log streams
+aws logs describe-log-streams --log-group-name /ecs/auto-dev --order-by LastEventTime --descending --limit 10
+
+# Get specific agent logs
+aws logs get-log-events --log-group-name /ecs/auto-dev --log-stream-name "pm/pm/<task-id>" --limit 50
 ```
 
-### Deploy Changes
+### Check ECS Status
 ```bash
-rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' \
-  -e "ssh -i ~/.ssh/<key>.pem" \
-  . ubuntu@<EC2_IP>:/auto-dev/
+# List services
+aws ecs list-services --cluster auto-dev --region us-east-1
+
+# Check deployment status
+aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-east-1 | jq '.services[0].deployments'
+
+# Check events
+aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-east-1 | jq '.services[0].events[0:5]'
 ```
 
 ### Human Approval
 ```bash
 # Via Dashboard
-http://<EC2_IP>:8080 → Approval Queue
+http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com → Approval Queue
 
 # Via API
-curl -X POST http://localhost:8080/api/approvals/<id>/approve
-curl -X POST http://localhost:8080/api/approvals/<id>/reject \
+curl -X POST http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com/api/approvals/<id>/approve
+curl -X POST http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com/api/approvals/<id>/reject \
   -d '{"reason": "Needs more work"}'
 ```

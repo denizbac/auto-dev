@@ -6,17 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Auto-Dev is an autonomous software development system that uses 8 AI agents to develop software on GitLab repositories. Uses Codex (primary) with Claude as fallback. Agents handle the full lifecycle: analysis, specs, implementation, review, testing, security, deployment.
 
-## EC2 Connection
-
-```bash
-# SSH to EC2 instance
-EC2_IP=$(cd terraform && terraform output -raw public_ip)
-ssh -i ~/.ssh/auto-dev.pem ubuntu@$EC2_IP
-
-# Or one-liner:
-ssh -i ~/.ssh/auto-dev.pem ubuntu@$(cd terraform && terraform output -raw public_ip)
-```
-
 ## Commands
 
 ```bash
@@ -25,20 +14,34 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 createdb autodev  # PostgreSQL required
 
-# Start System
+# Start System (Local)
 python dashboard/server.py                    # Dashboard on :8080
 python -m watcher.agent_runner --agent pm     # Start specific agent
 
-# Deployment
-EC2_IP=$(cd terraform && terraform output -raw public_ip)
-rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' \
-  -e "ssh -i ~/.ssh/auto-dev.pem" . ubuntu@$EC2_IP:/auto-dev/
+# Deployment to ECS
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev
+docker build --platform linux/amd64 -t 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest .
+docker push 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest
 
-# On EC2
-./scripts/start_agents.sh status              # Check agents
-./scripts/start_agents.sh                     # Start all
-./scripts/start_agents.sh stop                # Stop all
-tmux attach -t claude-<agent>                 # View session (Ctrl+B, D detach)
+# Redeploy ECS services (after push)
+aws ecs update-service --cluster auto-dev --service auto-dev-pm --force-new-deployment --region us-east-1
+# Or redeploy all agents:
+for svc in auto-dev-dashboard auto-dev-pm auto-dev-architect auto-dev-builder auto-dev-reviewer auto-dev-tester auto-dev-security auto-dev-devops auto-dev-bug_finder; do
+  aws ecs update-service --cluster auto-dev --service $svc --force-new-deployment --region us-east-1
+done
+
+# View ECS Logs
+aws logs tail /ecs/auto-dev --follow --filter-pattern "pm"
+
+# Check deployment status
+aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-east-1 | jq '.services[0].deployments'
+```
+
+## Dashboard URL
+
+```bash
+cd terraform && terraform output dashboard_url
+# http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com
 ```
 
 ## Architecture
