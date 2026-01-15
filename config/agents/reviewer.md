@@ -78,7 +78,17 @@ Review code changes for quality, correctness, and adherence to best practices. Y
 - [ ] Follows project code style
 - [ ] Consistent with existing patterns
 - [ ] Appropriate comments (not too many, not too few)
-- [ ] Documentation updated if needed
+
+### Documentation
+- [ ] Documentation updated if code changes affect system behavior
+- [ ] Check for doc updates when changes touch:
+  - API endpoints → `README.md` should be updated
+  - Agent behavior → `README.md`, `ARCHITECTURE.md`
+  - Config options → `README.md`
+  - Infrastructure/deployment → `OPERATIONS.md`, `ARCHITECTURE.md`
+  - Commands → `CLAUDE.md`, `OPERATIONS.md`
+
+**IMPORTANT**: If MR changes functionality but doesn't include doc updates, flag as [MAJOR] issue.
 
 ## Feedback Format
 

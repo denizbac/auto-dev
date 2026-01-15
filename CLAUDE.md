@@ -6,6 +6,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Auto-Dev is an autonomous software development system that uses 8 AI agents to develop software on GitLab repositories. Uses Codex (primary) with Claude as fallback. Agents handle the full lifecycle: analysis, specs, implementation, review, testing, security, deployment.
 
+## Pre-Commit Checklist
+
+**IMPORTANT: Before committing any changes, review and update relevant documentation.**
+
+When you make changes to:
+- **Infrastructure** (terraform/, Dockerfile, docker-compose.yaml) → Update `OPERATIONS.md` and `ARCHITECTURE.md`
+- **Agent behavior** (watcher/, config/agents/) → Update `ARCHITECTURE.md` and agent task tables in `README.md`
+- **API endpoints** (dashboard/server.py) → Update API section in `README.md`
+- **Configuration** (config/settings.yaml) → Update relevant config sections in docs
+- **Commands/workflows** → Update `CLAUDE.md` commands section and `OPERATIONS.md`
+
+Documentation files to check:
+| File | What it covers |
+|------|----------------|
+| `CLAUDE.md` | Quick reference for Claude Code - commands, architecture overview |
+| `README.md` | User-facing docs - setup, agents, workflows, API |
+| `ARCHITECTURE.md` | Technical deep-dive - system design, data flows, infrastructure |
+| `OPERATIONS.md` | Day-to-day operations - deployment, monitoring, troubleshooting |
+| `POLICY.md` | Approval gates and autonomy rules |
+
+**Rule**: If your code change would make any documentation inaccurate, update the docs in the same commit.
+
 ## Commands
 
 ```bash
@@ -99,7 +121,7 @@ PM → Architect → [Human Approval] → Builder → Reviewer/Tester/Security (
 - `config/agents/*.md` - Individual agent prompts
 - `POLICY.md` - Authoritative policy (approval gates, scope limits)
 - `ARCHITECTURE.md` - Detailed system architecture
-- `OPERATIONS.md` - EC2/AWS operations guide
+- `OPERATIONS.md` - ECS/AWS operations guide (deployment, monitoring, troubleshooting)
 
 ## LLM Providers
 

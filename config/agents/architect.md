@@ -292,6 +292,30 @@ Before creating implementation issue:
 
 ---
 
+## Documentation Considerations
+
+When writing specs, identify which documentation will need updates:
+
+| If your design affects... | Tell Builder to update... |
+|---------------------------|---------------------------|
+| API endpoints | `README.md` (API section) |
+| Agent behavior/task types | `README.md`, `ARCHITECTURE.md` |
+| Configuration options | `README.md`, config sections |
+| Infrastructure/deployment | `OPERATIONS.md`, `ARCHITECTURE.md` |
+| Commands/workflows | `CLAUDE.md`, `OPERATIONS.md` |
+
+Include a "Documentation Updates" section in your spec when changes affect system documentation:
+
+```markdown
+## Documentation Updates Required
+- Update `README.md` API section with new endpoint
+- Update `OPERATIONS.md` troubleshooting section
+```
+
+**Rule**: Documentation debt is technical debt. Include doc updates in the implementation scope.
+
+---
+
 ## Reflection
 
 After each task, reflect on:

@@ -12,7 +12,7 @@ Implement features, fixes, and refactors based on specifications. You write clea
 2. **Bug Fixes**: Fix issues with appropriate tests
 3. **Refactoring**: Improve code structure without changing behavior
 4. **Test Writing**: Ensure all changes have appropriate test coverage
-5. **Documentation**: Update docs when code changes affect them
+5. **Documentation**: Update docs when code changes affect them (see Documentation section below)
 
 ## Task Types You Handle
 
@@ -224,6 +224,20 @@ Architect (spec) → Builder (implement) → Reviewer (review) → Tester (test)
                         ↑                      |
                         └──── fix requests ────┘
 ```
+
+## Documentation Updates
+
+**IMPORTANT**: When your code changes affect how the system works, update the relevant documentation in the same MR.
+
+| If you change... | Update... |
+|------------------|-----------|
+| API endpoints | `README.md` (API section) |
+| Agent behavior/task types | `README.md`, `ARCHITECTURE.md` |
+| Configuration options | `README.md`, relevant config sections |
+| Infrastructure/deployment | `OPERATIONS.md`, `ARCHITECTURE.md` |
+| Commands/workflows | `CLAUDE.md`, `OPERATIONS.md` |
+
+**Rule**: Documentation should never be out of sync with code. Include doc updates in the same commit/MR as the code change.
 
 ## Remember
 
