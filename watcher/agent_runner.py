@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
-Autonomous Claude Watcher/Supervisor
-=====================================
+Auto-Dev Agent Runner
+=====================
 
-Manages the Claude Code worker process, ensuring continuous operation,
-monitoring health, and enforcing token budgets.
+Runs a single AI agent instance, managing LLM sessions, task processing,
+and coordination with other agents via Redis and the orchestrator.
 
-Multi-Agent Support:
-  --agent hunter    Run as the Hunter agent (opportunity scanning)
-  --agent critic    Run as the Critic agent (idea evaluation/gatekeeper)
-  --agent builder   Run as the Builder agent (product creation)
-  --agent tester    Run as the Tester agent (QA validation)
-  --agent publisher Run as the Publisher agent (deployment/marketing)
-  --agent meta      Run as the Meta agent (swarm architect)
-  --agent master    Run as the general-purpose agent (default)
+Usage:
+  python -m watcher.agent_runner --agent pm          # Run PM agent
+  python -m watcher.agent_runner --agent architect   # Run Architect agent
+  python -m watcher.agent_runner --agent builder     # Run Builder agent
+  python -m watcher.agent_runner --agent reviewer    # Run Reviewer agent
+  python -m watcher.agent_runner --agent tester      # Run Tester agent
+  python -m watcher.agent_runner --agent security    # Run Security agent
+  python -m watcher.agent_runner --agent devops      # Run DevOps agent
+  python -m watcher.agent_runner --agent bug_finder  # Run Bug Finder agent
 """
 
 import subprocess
@@ -35,11 +36,16 @@ try:
 except ImportError:
     boto3 = None
 
+try:
+    import redis as redis_lib
+except ImportError:
+    redis_lib = None
+
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from watcher.memory import ShortTermMemoryDB, ShortTermMemory
-from watcher.orchestrator import (
+from watcher.orchestrator_pg import (
     get_orchestrator, Orchestrator, Task, TaskType, MessageType
 )
 
@@ -89,8 +95,8 @@ class SessionStats:
 
 
 @dataclass 
-class WatcherState:
-    """Current state of the watcher."""
+class AgentState:
+    """Current state of the agent runner."""
     agent_id: str = "master"
     is_running: bool = False
     current_session: Optional[SessionStats] = None
@@ -112,7 +118,7 @@ class WatcherState:
 RATE_LIMIT_FILE = Path('/auto-dev/data/.rate_limited')
 
 
-class ClaudeWorkerProcess:
+class AgentWorkerProcess:
     """Manages a single LLM worker process."""
     
     def __init__(
@@ -147,12 +153,15 @@ class ClaudeWorkerProcess:
     def start(self) -> str:
         """
         Start a new LLM session.
-        
+
         Returns:
             Session ID
         """
         self.session_id = f"{self.agent_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
-        
+
+        # Ensure working directory exists
+        self.working_dir.mkdir(parents=True, exist_ok=True)
+
         # Read agent prompt
         if not self.prompt_path.exists():
             raise FileNotFoundError(f"Agent prompt not found: {self.prompt_path}")
@@ -186,9 +195,14 @@ class ClaudeWorkerProcess:
             env.setdefault("APIFY_API_KEY", apify_token)
 
         if self.provider == "codex":
-            openai_key = _load_ssm_param(OPENAI_SSM_PARAM)
+            # Try multiple sources for OpenAI API key
+            openai_key = (
+                os.environ.get("OPENAI_API_KEY") or
+                os.environ.get("CODEX_API_KEY") or
+                _load_ssm_param(OPENAI_SSM_PARAM)
+            )
             if openai_key:
-                env.setdefault("OPENAI_API_KEY", openai_key)
+                env["OPENAI_API_KEY"] = openai_key
         
         # Build command - provider-driven CLI invocation
         command = self.provider_config.get("command", "claude")
@@ -275,9 +289,9 @@ class ClaudeWorkerProcess:
         return exit_code
 
 
-class AutonomousClaudeWatcher:
+class AgentRunner:
     """
-    Main watcher/supervisor for the Autonomous Claude agent.
+    Runs a single AI agent, managing LLM sessions and task processing.
     
     Responsibilities:
     - Spawn and monitor Claude Code worker processes
@@ -290,18 +304,18 @@ class AutonomousClaudeWatcher:
     """
     
     # Agent type to task type mapping
+    # Maps agent types to the task types they handle (from settings.yaml)
+    # Note: 'directive' and 'human_directive' are universal - any agent can receive human instructions
     AGENT_TASK_TYPES = {
-        'hunter': [TaskType.SCAN_PLATFORM.value, TaskType.RESEARCH.value],
-        'builder': [TaskType.BUILD_PRODUCT.value, 'fix_product'],  # Builder fixes products, doesn't do general research
-        'publisher': [TaskType.DEPLOY.value, TaskType.WRITE_CONTENT.value, TaskType.MARKET.value, 'publish'],
-        'critic': ['evaluate_idea'],  # Critic only evaluates, doesn't do general research
-        'reviewer': ['code_review', 'review_product'],  # Reviewer does code reviews before testing
-        'tester': ['test_product'],   # Tester only tests, doesn't do general research
-        'meta': ['implement_proposal'],  # Meta ONLY implements approved proposals
-        'liaison': ['respond_to_human', 'directive'],  # Human communication
-        'support': ['monitor_github', 'triage_issue'],  # Support monitors external feedback
-        'pm': ['write_spec'],  # PM creates product specifications
-        'master': None  # Master handles all task types
+        'pm': ['analyze_repo', 'create_epic', 'break_down_epic', 'create_user_story', 'prioritize_backlog', 'triage_issue', 'directive', 'human_directive'],
+        'architect': ['evaluate_feasibility', 'write_spec', 'create_implementation_issue', 'directive', 'human_directive'],
+        'builder': ['implement_feature', 'implement_fix', 'implement_refactor', 'address_review_feedback', 'directive', 'human_directive'],
+        'reviewer': ['review_mr', 'directive', 'human_directive'],
+        'tester': ['write_tests', 'run_tests', 'validate_feature', 'analyze_coverage', 'directive', 'human_directive'],
+        'security': ['security_scan', 'dependency_audit', 'compliance_check', 'directive', 'human_directive'],
+        'devops': ['manage_pipeline', 'deploy', 'rollback', 'fix_build', 'directive', 'human_directive'],
+        'bug_finder': ['static_analysis', 'bug_hunt', 'directive', 'human_directive'],
+        'master': None  # Master handles all task types (fallback)
     }
     
     def __init__(
@@ -318,8 +332,8 @@ class AutonomousClaudeWatcher:
         """
         self.config = self._load_config(config_path)
         self.agent_id = agent_id
-        self.state = WatcherState(agent_id=agent_id)
-        self.worker: Optional[ClaudeWorkerProcess] = None
+        self.state = AgentState(agent_id=agent_id)
+        self.worker: Optional[AgentWorkerProcess] = None
         self.shutdown_requested = False
         
         # Get agent-specific configuration
@@ -345,6 +359,29 @@ class AutonomousClaudeWatcher:
         signal.signal(signal.SIGINT, self._handle_shutdown)
         
         logger.info(f"Watcher initialized for agent: {agent_id}")
+
+        # Initialize Redis connection for agent control
+        self._redis = None
+        redis_url = os.environ.get('REDIS_URL') or orchestrator_config.get('redis_url')
+        if redis_lib and redis_url:
+            try:
+                self._redis = redis_lib.from_url(redis_url)
+                logger.info(f"Redis connected for agent control: {redis_url}")
+            except Exception as e:
+                logger.warning(f"Redis connection failed: {e}")
+
+    def _is_agent_enabled(self) -> bool:
+        """Check if this agent is enabled via Redis."""
+        if not self._redis:
+            return True  # Default to enabled if Redis not available
+
+        try:
+            enabled = self._redis.get(f"agent:{self.agent_id}:enabled")
+            # If key doesn't exist (None), default to enabled
+            return enabled is None or enabled == b"1"
+        except Exception as e:
+            logger.warning(f"Redis check failed, defaulting to enabled: {e}")
+            return True
 
     def _get_llm_config(self) -> Dict[str, Any]:
         """Return LLM provider config block."""
@@ -409,9 +446,15 @@ class AutonomousClaudeWatcher:
         """Resolve the model name for a provider using optional model_map."""
         model = self.agent_config.get('model')
         provider_config = self._get_provider_config(provider)
-        model_map = provider_config.get('model_map', {})
-        if model_map and model in model_map:
-            return model_map[model]
+        # Check if model_map key exists in config
+        if 'model_map' in provider_config:
+            model_map = provider_config['model_map']
+            # Empty model_map means don't pass any model (e.g., Codex with ChatGPT)
+            if not model_map:
+                return None
+            # Use mapping if available
+            if model in model_map:
+                return model_map[model]
         return model
     
     def _load_config(self, config_path: str) -> Dict[str, Any]:
@@ -530,7 +573,7 @@ class AutonomousClaudeWatcher:
     def _claim_next_task(self) -> Optional[Task]:
         """Claim the next available task for this agent."""
         task_types = self.AGENT_TASK_TYPES.get(self.agent_id)
-        return self.orchestrator.claim_task(self.agent_id, task_types)
+        return self.orchestrator.claim_task(self.agent_id, task_types=task_types)
     
     def _build_task_context(self, task: Task) -> str:
         """Build context string for a task."""
@@ -602,7 +645,7 @@ If this task should be handed off to another agent, indicate that clearly with t
             provider_config = self._get_provider_config(provider)
             model = self._resolve_model_for_provider(provider)
 
-            self.worker = ClaudeWorkerProcess(
+            self.worker = AgentWorkerProcess(
                 prompt_path=self._get_prompt_path(),
                 working_dir='/auto-dev/data/projects',
                 agent_id=self.agent_id,
@@ -745,25 +788,50 @@ If this task should be handed off to another agent, indicate that clearly with t
         return status['reset_time']
     
     def _set_rate_limit(self, reset_time: datetime, provider: str) -> None:
-        """Set the shared rate limit file so all agents can react."""
+        """Set the shared rate limit file so all agents can react (atomic operation)."""
+        import tempfile
         try:
-            RATE_LIMIT_FILE.write_text(json.dumps({
+            # Use atomic write: write to temp file, then rename
+            # This prevents race conditions where multiple agents write simultaneously
+            data = json.dumps({
                 'provider': provider,
                 'reset_time': reset_time.isoformat(),
                 'set_by': self.agent_id,
                 'set_at': datetime.utcnow().isoformat()
-            }))
+            })
+
+            # Create temp file in same directory (required for atomic rename)
+            temp_fd, temp_path = tempfile.mkstemp(
+                dir=RATE_LIMIT_FILE.parent,
+                prefix='.rate_limit_',
+                suffix='.tmp'
+            )
+            try:
+                os.write(temp_fd, data.encode('utf-8'))
+                os.fsync(temp_fd)  # Ensure data is flushed to disk
+            finally:
+                os.close(temp_fd)
+
+            # Atomic rename (on POSIX systems)
+            os.replace(temp_path, RATE_LIMIT_FILE)
+
             logger.warning(f"Rate limit set for {provider} until {reset_time.isoformat()}")
-            
+
             # Send Slack notification
             try:
                 from dashboard.slack_notifications import notify_rate_limit
                 notify_rate_limit(self.agent_id, reset_time.isoformat())
             except Exception as e:
                 logger.warning(f"Failed to send Slack rate limit notification: {e}")
-                
+
         except Exception as e:
             logger.error(f"Failed to set rate limit file: {e}")
+            # Clean up temp file if it exists
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
     
     def _detect_rate_limit_from_output(self, output: str, provider: str) -> Optional[datetime]:
         """
@@ -832,8 +900,8 @@ If this task should be handed off to another agent, indicate that clearly with t
         if RATE_LIMIT_FILE.exists():
             try:
                 RATE_LIMIT_FILE.unlink()
-            except:
-                pass
+            except OSError as e:
+                logger.warning(f"Failed to delete rate limit file: {e}")
         
         self.orchestrator.update_agent_status(self.agent_id, 'idle')
         logger.info("Rate limit reset. Resuming...")
@@ -930,13 +998,15 @@ If this task should be handed off to another agent, indicate that clearly with t
                 data = json.loads(status_file.read_text())
                 # Only count agents that are actively processing a task
                 # Must have: running session + current task + not rate limited
-                has_session = data.get('is_running') and data.get('current_session', {}).get('id')
-                has_task = data.get('current_task', {}).get('id')
-                not_rate_limited = not data.get('rate_limit', {}).get('limited')
-                
+                has_session = data.get('is_running') and (data.get('current_session') or {}).get('id')
+                has_task = (data.get('current_task') or {}).get('id')
+                not_rate_limited = not (data.get('rate_limit') or {}).get('limited')
+
                 if has_session and has_task and not_rate_limited:
                     working_count += 1
-            except:
+            except (json.JSONDecodeError, OSError, KeyError) as e:
+                # Skip malformed or inaccessible status files
+                logger.debug(f"Skipping status file {status_file}: {e}")
                 continue
         
         if working_count >= max_concurrent:
@@ -947,7 +1017,7 @@ If this task should be handed off to another agent, indicate that clearly with t
     
     def run(self) -> None:
         """Main watcher loop."""
-        logger.info(f"Starting Autonomous Claude Watcher (agent: {self.agent_id})")
+        logger.info(f"Starting Agent Runner (agent: {self.agent_id})")
         self.state.is_running = True
         
         # Register with orchestrator
@@ -955,6 +1025,13 @@ If this task should be handed off to another agent, indicate that clearly with t
         
         while not self.shutdown_requested:
             try:
+                # Check if agent is enabled via Redis
+                if not self._is_agent_enabled():
+                    self.orchestrator.update_agent_status(self.agent_id, 'disabled')
+                    logger.info(f"Agent {self.agent_id} is disabled, waiting...")
+                    time.sleep(10)  # Check again in 10 seconds
+                    continue
+
                 # Check for shared rate limit (set by any agent)
                 rate_limit = self._get_rate_limit_status()
                 if rate_limit:
@@ -1106,26 +1183,29 @@ If this task should be handed off to another agent, indicate that clearly with t
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Autonomous Claude Watcher/Supervisor',
+        description='Auto-Dev Agent Runner - runs a single AI agent',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Agent Types:
-  master     General-purpose agent (default)
-  hunter     Opportunity scanning and research
-  builder    Product and tool creation
-  publisher  Deployment and marketing
+  pm          Product Manager - defines what to build
+  architect   Designs solutions, writes specs
+  builder     Implements features and fixes
+  reviewer    Reviews merge requests
+  tester      Writes and runs tests
+  security    Security scanning and audits
+  devops      CI/CD and deployments
+  bug_finder  Proactive bug detection
 
 Examples:
-  python supervisor.py                    # Run as master agent
-  python supervisor.py --agent hunter     # Run as hunter agent
-  python supervisor.py --agent builder    # Run as builder agent
-  python supervisor.py --agent publisher  # Run as publisher agent
+  python -m watcher.agent_runner --agent pm
+  python -m watcher.agent_runner --agent builder
+  python -m watcher.agent_runner --agent reviewer
 """
     )
     parser.add_argument(
         '--agent', '-a',
-        choices=['master', 'hunter', 'critic', 'pm', 'builder', 'reviewer', 'tester', 'publisher', 'meta', 'liaison', 'support'],
-        default='master',
+        choices=['pm', 'architect', 'builder', 'reviewer', 'tester', 'security', 'devops', 'bug_finder', 'master'],
+        default='pm',
         help='Agent type to run as (default: master)'
     )
     parser.add_argument(
@@ -1139,11 +1219,11 @@ Examples:
 def main():
     """Main entry point."""
     args = parse_args()
-    watcher = AutonomousClaudeWatcher(
+    runner = AgentRunner(
         config_path=args.config,
         agent_id=args.agent
     )
-    watcher.run()
+    runner.run()
 
 
 if __name__ == '__main__':

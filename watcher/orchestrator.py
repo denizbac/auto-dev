@@ -330,9 +330,46 @@ class Orchestrator:
                     claimed_at TEXT,
                     completed_at TEXT,
                     result TEXT,
-                    error TEXT
+                    error TEXT,
+                    repo_id TEXT,
+                    needs_approval INTEGER DEFAULT 0,
+                    approval_status TEXT,
+                    approval_type TEXT,
+                    approved_by TEXT,
+                    approved_at TEXT,
+                    rejection_reason TEXT
                 )
             """)
+
+            # Add approval columns to existing tables (migration)
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN repo_id TEXT")
+            except:
+                pass
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN needs_approval INTEGER DEFAULT 0")
+            except:
+                pass
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN approval_status TEXT")
+            except:
+                pass
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN approval_type TEXT")
+            except:
+                pass
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN approved_by TEXT")
+            except:
+                pass
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN approved_at TEXT")
+            except:
+                pass
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN rejection_reason TEXT")
+            except:
+                pass
             
             # File locks table
             conn.execute("""
@@ -503,9 +540,136 @@ class Orchestrator:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_processed_issues_repo ON processed_issues(repo, issue_number)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_project_proposals_status ON project_proposals(status)")
-            
+
+            # Repos table for multi-repo management
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS repos (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    gitlab_url TEXT NOT NULL,
+                    gitlab_project_id TEXT NOT NULL,
+                    slug TEXT UNIQUE NOT NULL,
+                    default_branch TEXT DEFAULT 'main',
+                    autonomy_mode TEXT DEFAULT 'guided',
+                    settings TEXT DEFAULT '{}',
+                    status TEXT DEFAULT 'active',
+                    active INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_repos_slug ON repos(slug)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_repos_active ON repos(active)")
+
             conn.commit()
-    
+
+    # ==================== REPOSITORY MANAGEMENT ====================
+
+    def list_repos(self, active_only: bool = True, status: str = None) -> List[Dict[str, Any]]:
+        """List all repositories."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            if status:
+                cursor = conn.execute(
+                    "SELECT * FROM repos WHERE status = ? ORDER BY name",
+                    (status,)
+                )
+            elif active_only:
+                cursor = conn.execute(
+                    "SELECT * FROM repos WHERE active = 1 ORDER BY name"
+                )
+            else:
+                cursor = conn.execute("SELECT * FROM repos ORDER BY name")
+            return [self._row_to_repo_dict(row) for row in cursor.fetchall()]
+
+    def get_repo(self, repo_id: str) -> Optional[Dict[str, Any]]:
+        """Get a repository by ID."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM repos WHERE id = ?",
+                (repo_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return self._row_to_repo_dict(row)
+
+    def create_repo(
+        self,
+        repo_id: str,
+        name: str,
+        gitlab_url: str,
+        gitlab_project_id: str,
+        default_branch: str = "main",
+        autonomy_mode: str = "guided",
+        settings: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """Create a new managed repository."""
+        now = datetime.utcnow().isoformat()
+        slug = name.lower().replace(' ', '-').replace('/', '-')
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                INSERT INTO repos
+                (id, name, gitlab_url, gitlab_project_id, slug, default_branch,
+                 autonomy_mode, settings, status, active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                repo_id, name, gitlab_url, gitlab_project_id,
+                slug, default_branch, autonomy_mode,
+                json.dumps(settings or {}), 'active', 1, now, now
+            ))
+            conn.commit()
+
+        logger.info(f"Created repo: {name} ({repo_id})")
+        return self.get_repo(repo_id)
+
+    def update_repo(self, repo_id: str, **updates) -> bool:
+        """Update repository settings."""
+        updates['updated_at'] = datetime.utcnow().isoformat()
+
+        # Handle settings separately (needs JSON serialization)
+        if 'settings' in updates:
+            updates['settings'] = json.dumps(updates['settings'])
+
+        set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                f"UPDATE repos SET {set_clause} WHERE id = ?",
+                (*updates.values(), repo_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_repo(self, repo_id: str) -> bool:
+        """Delete a repository."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "DELETE FROM repos WHERE id = ?",
+                (repo_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def _row_to_repo_dict(self, row) -> Dict[str, Any]:
+        """Convert database row to repo dictionary."""
+        return {
+            'id': row['id'],
+            'name': row['name'],
+            'gitlab_url': row['gitlab_url'],
+            'gitlab_project_id': row['gitlab_project_id'],
+            'slug': row['slug'],
+            'default_branch': row['default_branch'],
+            'autonomy_mode': row['autonomy_mode'],
+            'settings': json.loads(row['settings']) if row['settings'] else {},
+            'status': row['status'],
+            'active': bool(row['active']),
+            'created_at': row['created_at'],
+            'updated_at': row['updated_at']
+        }
+
     # ==================== TASK QUEUE ====================
     
     def create_task(
@@ -613,23 +777,25 @@ class Orchestrator:
         with self._lock:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                
+
                 # Build query - respect assigned_to field
-                # Agent can claim: tasks assigned to them OR unassigned tasks
+                # Key logic: Tasks directly assigned to this agent can be claimed regardless of task type.
+                # Task type filtering only applies to unassigned tasks. This allows human directives
+                # to reach specific agents even if 'directive' isn't in their task_types list.
                 if task_types:
                     placeholders = ','.join('?' * len(task_types))
+                    # Tasks assigned to this agent OR unassigned tasks matching agent's task types
                     query = f"""
-                        SELECT * FROM tasks 
-                        WHERE status = 'pending' 
-                        AND type IN ({placeholders})
-                        AND (assigned_to IS NULL OR assigned_to = ?)
+                        SELECT * FROM tasks
+                        WHERE status = 'pending'
+                        AND (assigned_to = ? OR (assigned_to IS NULL AND type IN ({placeholders})))
                         ORDER BY priority DESC, created_at ASC
                         LIMIT 1
                     """
-                    cursor = conn.execute(query, task_types + [agent_id])
+                    cursor = conn.execute(query, [agent_id] + task_types)
                 else:
                     cursor = conn.execute("""
-                        SELECT * FROM tasks 
+                        SELECT * FROM tasks
                         WHERE status = 'pending'
                         AND (assigned_to IS NULL OR assigned_to = ?)
                         ORDER BY priority DESC, created_at ASC

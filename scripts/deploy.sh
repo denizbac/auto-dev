@@ -127,7 +127,11 @@ else
 
     # Restart services if running
     sudo systemctl restart autodev-dashboard 2>/dev/null || echo "Dashboard not running"
-    sudo systemctl restart autodev-supervisor 2>/dev/null || echo "Supervisor not running"
+    # Note: In Docker mode, agents run as separate containers, not systemd services
+    # For native mode, restart any running agent services
+    for agent in pm architect builder reviewer tester security devops bug_finder; do
+        sudo systemctl restart autodev-\${agent} 2>/dev/null || true
+    done
     sudo systemctl restart autodev-scheduler 2>/dev/null || echo "Scheduler not running"
     sudo systemctl restart autodev-webhook 2>/dev/null || echo "Webhook not running"
 

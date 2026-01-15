@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS repos (
     autonomy_mode TEXT DEFAULT 'guided' CHECK (autonomy_mode IN ('full', 'guided')),
     settings JSONB DEFAULT '{}',
     webhook_secret_hash TEXT,
+    token_ssm_path TEXT,
+    mr_prefix TEXT DEFAULT '[AUTO-DEV]',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     active BOOLEAN DEFAULT true
@@ -117,9 +119,12 @@ CREATE TABLE IF NOT EXISTS gitlab_objects (
 CREATE INDEX IF NOT EXISTS idx_tasks_repo_status ON tasks(repo_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON tasks(status, priority DESC);
 CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_agent);
 CREATE INDEX IF NOT EXISTS idx_approvals_repo_status ON approvals(repo_id, status);
 CREATE INDEX IF NOT EXISTS idx_approvals_pending ON approvals(status) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_approvals_created_at ON approvals(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_status_type ON agent_status(agent_type);
+CREATE INDEX IF NOT EXISTS idx_agent_status_heartbeat ON agent_status(last_heartbeat DESC);
 CREATE INDEX IF NOT EXISTS idx_reflections_repo_agent ON reflections(repo_id, agent_type);
 CREATE INDEX IF NOT EXISTS idx_learnings_repo_agent ON learnings(repo_id, agent_type) WHERE active = true;
 CREATE INDEX IF NOT EXISTS idx_gitlab_objects_repo_type ON gitlab_objects(repo_id, object_type);

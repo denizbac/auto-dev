@@ -11,6 +11,7 @@ import os
 import sys
 import subprocess
 import signal
+import logging
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
@@ -18,8 +19,46 @@ import json
 import sqlite3
 import asyncio
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+try:
+    import psycopg2
+    import psycopg2.extras
+    HAS_PSYCOPG2 = True
+except ImportError:
+    HAS_PSYCOPG2 = False
+
+try:
+    import redis
+    HAS_REDIS = True
+except ImportError:
+    HAS_REDIS = False
+
+def parse_json_field(value):
+    """Parse JSON field handling both string (SQLite) and dict (PostgreSQL JSONB)."""
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return value
+
+try:
+    import boto3
+    HAS_BOTO3 = True
+except ImportError:
+    HAS_BOTO3 = False
+
+# ECS configuration for Fargate deployment
+ECS_CLUSTER = os.environ.get('ECS_CLUSTER', 'auto-dev')
+USE_ECS = os.environ.get('USE_ECS', 'false').lower() == 'true'
+
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import yaml
@@ -28,7 +67,7 @@ import psutil
 # Add parent directory for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from watcher.orchestrator import get_orchestrator
+from watcher.orchestrator_pg import get_orchestrator
 
 # Import repo management router
 from dashboard.repos import router as repos_router, set_orchestrator as set_repos_orchestrator
@@ -44,11 +83,277 @@ async def health_check():
     """Health check endpoint for Docker/load balancer."""
     return {"status": "healthy", "service": "dashboard", "version": "2.0.0"}
 
+
+# ============================================================================
+# ADMIN/MIGRATION ENDPOINTS (temporary)
+# ============================================================================
+
+@app.post("/api/admin/run-migrations")
+async def run_migrations():
+    """Run database migrations to fix schema issues."""
+    if not HAS_PSYCOPG2:
+        return {"error": "PostgreSQL not available"}
+
+    conn = get_postgres_db()
+    if not conn:
+        return {"error": "Could not connect to PostgreSQL"}
+
+    results = []
+    try:
+        cursor = conn.cursor()
+        migrations = [
+            ("Add claimed_at column", "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMP"),
+            ("Add needs_approval column", "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS needs_approval INTEGER DEFAULT 0"),
+            ("Add approval_status column", "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS approval_status TEXT"),
+            ("Add approved_by column", "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS approved_by TEXT"),
+            ("Add approved_at column", "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP"),
+            ("Add rejection_reason column", "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS rejection_reason TEXT"),
+            ("Drop old status constraint", "ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check"),
+            ("Add new status constraint", "ALTER TABLE tasks ADD CONSTRAINT tasks_status_check CHECK (status IN ('pending', 'claimed', 'in_progress', 'completed', 'failed', 'cancelled'))"),
+        ]
+        for name, sql in migrations:
+            try:
+                cursor.execute(sql)
+                conn.commit()
+                results.append({"migration": name, "status": "success"})
+            except Exception as e:
+                conn.rollback()
+                results.append({"migration": name, "status": "failed", "error": str(e)})
+
+        return {"status": "completed", "results": results}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+    finally:
+        conn.close()
+
+# ============================================================================
+# AUTONOMY & APPROVAL CONFIGURATION API
+# ============================================================================
+
+@app.get("/api/config/autonomy")
+async def get_autonomy_config():
+    """Get current autonomy and approval gate settings."""
+    cfg = load_config()
+    autonomy = cfg.get('autonomy', {})
+    return {
+        "default_mode": autonomy.get('default_mode', 'guided'),
+        "approval_gates": autonomy.get('approval_gates', {
+            "issue_creation": True,
+            "spec_approval": True,
+            "merge_approval": True,
+            "deploy_approval": False
+        }),
+        "auto_approve_thresholds": autonomy.get('auto_approve_thresholds', {}),
+        "safety_limits": autonomy.get('safety_limits', {})
+    }
+
+
+@app.put("/api/config/autonomy")
+async def update_autonomy_config(request: Request):
+    """Update autonomy and approval gate settings."""
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning(f"Invalid JSON in request: {e}")
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    cfg = load_config()
+    if 'autonomy' not in cfg:
+        cfg['autonomy'] = {}
+
+    # Update only the fields that were provided
+    if 'default_mode' in body:
+        cfg['autonomy']['default_mode'] = body['default_mode']
+
+    if 'approval_gates' in body:
+        if 'approval_gates' not in cfg['autonomy']:
+            cfg['autonomy']['approval_gates'] = {}
+        cfg['autonomy']['approval_gates'].update(body['approval_gates'])
+
+    if 'auto_approve_thresholds' in body:
+        if 'auto_approve_thresholds' not in cfg['autonomy']:
+            cfg['autonomy']['auto_approve_thresholds'] = {}
+        cfg['autonomy']['auto_approve_thresholds'].update(body['auto_approve_thresholds'])
+
+    if 'safety_limits' in body:
+        if 'safety_limits' not in cfg['autonomy']:
+            cfg['autonomy']['safety_limits'] = {}
+        cfg['autonomy']['safety_limits'].update(body['safety_limits'])
+
+    save_config(cfg)
+    return {"success": True, "autonomy": cfg['autonomy']}
+
+
+# ============================================================================
+# PENDING APPROVALS API
+# ============================================================================
+
+@app.get("/api/pending-approvals")
+async def get_pending_approvals():
+    """Get all items pending human approval (tasks, MRs, deployments)."""
+    conn = get_postgres_db()
+    if not conn:
+        return {"approvals": [], "stats": {"tasks": 0, "merges": 0, "deploys": 0, "specs": 0, "issues": 0, "total": 0}}
+
+    try:
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get tasks pending approval from PostgreSQL
+        cursor.execute("""
+            SELECT id::text, task_type as type, priority, payload, assigned_agent as assigned_to,
+                   created_by, created_at, approval_type, repo_id::text
+            FROM tasks
+            WHERE needs_approval = 1 AND approval_status = 'pending'
+            ORDER BY priority DESC, created_at ASC
+        """)
+        tasks = []
+        for row in cursor.fetchall():
+            task = dict(row)
+            task['item_type'] = 'task'
+            task['created_at'] = task['created_at'].isoformat() if task.get('created_at') else None
+            tasks.append(task)
+
+        # Get from approvals table as well
+        dev_approvals = []
+        try:
+            cursor.execute("""
+                SELECT id::text, repo_id::text, approval_type, payload as context,
+                       status, created_at
+                FROM approvals
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+            """)
+            for row in cursor.fetchall():
+                approval = dict(row)
+                approval['item_type'] = 'approval'
+                approval['created_at'] = approval['created_at'].isoformat() if approval.get('created_at') else None
+                dev_approvals.append(approval)
+        except Exception as e:
+            print(f"Error fetching approvals: {e}")
+
+        # Combine and categorize
+        all_approvals = tasks + dev_approvals
+
+        # Count by type
+        stats = {
+            "tasks": len([a for a in all_approvals if a.get('approval_type') == 'task' or (a.get('item_type') == 'task' and not a.get('approval_type'))]),
+            "merges": len([a for a in all_approvals if a.get('approval_type') in ('merge', 'mr', 'merge_request')]),
+            "deploys": len([a for a in all_approvals if a.get('approval_type') in ('deploy', 'deployment')]),
+            "specs": len([a for a in all_approvals if a.get('approval_type') in ('spec', 'specification')]),
+            "issues": len([a for a in all_approvals if a.get('approval_type') in ('issue', 'issue_creation')]),
+            "total": len(all_approvals)
+        }
+
+        return {"approvals": all_approvals, "stats": stats}
+    except Exception as e:
+        return {"approvals": [], "stats": {"tasks": 0, "merges": 0, "deploys": 0, "specs": 0, "issues": 0, "total": 0}, "error": str(e)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/pending-approvals/{item_id}/approve")
+async def approve_pending_item(item_id: str, request: Request):
+    """Approve a pending item (task, MR, or deployment)."""
+    try:
+        body = await request.json()
+        notes = body.get('notes', '')
+    except (json.JSONDecodeError, ValueError, AttributeError):
+        notes = ''
+
+    conn = get_postgres_db()
+    if not conn:
+        return JSONResponse({"error": "Database unavailable"}, status_code=500)
+
+    now = datetime.now()
+
+    try:
+        cursor = conn.cursor()
+
+        # Try to update in tasks table first
+        cursor.execute("""
+            UPDATE tasks
+            SET approval_status = 'approved', approved_by = 'human', approved_at = %s
+            WHERE id::text = %s AND needs_approval = 1 AND approval_status = 'pending'
+        """, (now, item_id))
+
+        if cursor.rowcount > 0:
+            conn.commit()
+            return {"success": True, "message": "Task approved", "id": item_id}
+
+        # Try approvals table
+        cursor.execute("""
+            UPDATE approvals
+            SET status = 'approved', review_comment = %s, reviewed_at = %s
+            WHERE id::text = %s AND status = 'pending'
+        """, (notes, now, item_id))
+
+        if cursor.rowcount > 0:
+            conn.commit()
+            return {"success": True, "message": "Approval granted", "id": item_id}
+
+        return JSONResponse({"error": "Item not found or already processed"}, status_code=404)
+    except Exception as e:
+        conn.rollback()
+        return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        conn.close()
+
+
+@app.post("/api/pending-approvals/{item_id}/reject")
+async def reject_pending_item(item_id: str, request: Request):
+    """Reject a pending item (task, MR, or deployment)."""
+    try:
+        body = await request.json()
+        reason = body.get('reason', 'Rejected by human reviewer')
+    except (json.JSONDecodeError, ValueError, AttributeError):
+        reason = 'Rejected by human reviewer'
+
+    conn = get_postgres_db()
+    if not conn:
+        return JSONResponse({"error": "Database unavailable"}, status_code=500)
+
+    now = datetime.now()
+
+    try:
+        cursor = conn.cursor()
+
+        # Try to update in tasks table first
+        cursor.execute("""
+            UPDATE tasks
+            SET approval_status = 'rejected', approved_by = 'human', approved_at = %s,
+                rejection_reason = %s, status = 'cancelled'
+            WHERE id::text = %s AND needs_approval = 1 AND approval_status = 'pending'
+        """, (now, reason, item_id))
+
+        if cursor.rowcount > 0:
+            conn.commit()
+            return {"success": True, "message": "Task rejected", "id": item_id}
+
+        # Try approvals table
+        cursor.execute("""
+            UPDATE approvals
+            SET status = 'rejected', review_comment = %s, reviewed_at = %s
+            WHERE id::text = %s AND status = 'pending'
+        """, (reason, now, item_id))
+
+        if cursor.rowcount > 0:
+            conn.commit()
+            return {"success": True, "message": "Approval rejected", "id": item_id}
+
+        return JSONResponse({"error": "Item not found or already processed"}, status_code=404)
+    except Exception as e:
+        conn.rollback()
+        return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        conn.close()
+
+
 # Configuration
 CONFIG_PATH = Path("/auto-dev/config/settings.yaml")
 DB_PATH = Path("/auto-dev/data/memory/short_term.db")
 ORCHESTRATOR_DB_PATH = Path("/auto-dev/data/orchestrator.db")
 SCREENSHOTS_PATH = Path("/auto-dev/data/screenshots")
+REACT_BUILD_PATH = Path(__file__).parent / "frontend" / "dist"
 
 # Agent types
 AGENT_TYPES = ['pm', 'architect', 'builder', 'reviewer', 'tester', 'security', 'devops', 'bug_finder']
@@ -98,7 +403,8 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except:
+            except (ConnectionError, RuntimeError):
+                # Connection closed or websocket error - will be cleaned up later
                 pass
 
 manager = ConnectionManager()
@@ -204,7 +510,7 @@ def get_screenshots(limit: int = 20) -> List[Dict]:
         if meta_path.exists():
             try:
                 meta = dict(line.split(': ', 1) for line in meta_path.read_text().strip().split('\n'))
-            except:
+            except (OSError, ValueError):
                 pass
         
         screenshots.append({
@@ -221,11 +527,19 @@ def get_screenshots(limit: int = 20) -> List[Dict]:
 if SCREENSHOTS_PATH.exists():
     app.mount("/screenshots", StaticFiles(directory=str(SCREENSHOTS_PATH)), name="screenshots")
 
+# Mount React build assets (must be after API routes but before catch-all)
+if REACT_BUILD_PATH.exists():
+    app.mount("/assets", StaticFiles(directory=str(REACT_BUILD_PATH / "assets")), name="react-assets")
 
-@app.get("/", response_class=HTMLResponse)
+
+@app.get("/")
 async def dashboard():
-    """Serve the main dashboard HTML."""
-    return DASHBOARD_HTML
+    """Serve the React app."""
+    react_index = REACT_BUILD_PATH / "index.html"
+    if react_index.exists():
+        return FileResponse(react_index)
+    # Fallback to legacy HTML if React build not available
+    return HTMLResponse(content=DASHBOARD_HTML)
 
 
 @app.get("/api/status")
@@ -236,7 +550,7 @@ async def get_status():
     if status_file.exists():
         try:
             return json.loads(status_file.read_text())
-        except:
+        except (json.JSONDecodeError, OSError):
             pass
     
     return {
@@ -306,7 +620,7 @@ def get_agent_processes() -> List[Dict]:
     for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time', 'memory_percent', 'cpu_percent']):
         try:
             cmdline = ' '.join(proc.info['cmdline'] or [])
-            if 'supervisor.py' in cmdline or ('claude' in cmdline.lower() and 'code' not in cmdline.lower()):
+            if 'agent_runner.py' in cmdline or ('claude' in cmdline.lower() and 'code' not in cmdline.lower()):
                 processes.append({
                     'pid': proc.info['pid'],
                     'name': proc.info['name'],
@@ -324,7 +638,7 @@ def get_agent_processes() -> List[Dict]:
 async def api_agents():
     """Get info about running agents."""
     processes = get_agent_processes()
-    watcher_running = any('supervisor.py' in p.get('cmdline', '') for p in processes)
+    watcher_running = any('agent_runner.py' in p.get('cmdline', '') for p in processes)
     claude_processes = [p for p in processes if 'claude' in p.get('cmdline', '').lower()]
     
     return {
@@ -338,97 +652,464 @@ async def api_agents():
 
 @app.post("/api/agent/start")
 async def start_agent():
-    """Start the agent watcher."""
-    processes = get_agent_processes()
-    if any('supervisor.py' in p.get('cmdline', '') for p in processes):
-        return {"status": "already_running", "message": "Agent is already running"}
-    
+    """Enable all agents via Redis (instant soft-pause control)."""
+    # Always use Redis for instant enable/disable (agents always running in ECS)
+    r = get_redis()
+    if not r:
+        return {"status": "error", "message": "Redis unavailable"}
+
     try:
-        # Start the watcher in background
-        subprocess.Popen(
-            ['/auto-dev/venv/bin/python', '/auto-dev/watcher/supervisor.py'],
-            cwd='/auto-dev',
-            stdout=open('/auto-dev/logs/watcher.log', 'a'),
-            stderr=subprocess.STDOUT,
-            start_new_session=True
-        )
-        return {"status": "started", "message": "Agent started successfully"}
+        # Enable all agents
+        for agent_type in AGENT_TYPES:
+            r.set(f"agent:{agent_type}:enabled", "1")
+        # Notify agent runners
+        r.publish("agent:control", json.dumps({"action": "start_all"}))
+        return {"status": "started", "message": f"All {len(AGENT_TYPES)} agents enabled"}
     except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def _start_all_agents_ecs():
+    """Start all agents via ECS API."""
+    try:
+        ecs = boto3.client('ecs')
+        started = []
+        for agent_type in AGENT_TYPES:
+            service_name = f"{ECS_CLUSTER}-{agent_type}"
+            ecs.update_service(
+                cluster=ECS_CLUSTER,
+                service=service_name,
+                desiredCount=1
+            )
+            started.append(agent_type)
+        return {"status": "started", "message": f"Started {len(started)} agents via ECS"}
+    except Exception as e:
+        logger.error(f"ECS start_all error: {e}")
         return {"status": "error", "message": str(e)}
 
 
 @app.post("/api/agent/stop")
 async def stop_agent():
-    """Stop the agent watcher."""
-    stopped = 0
-    for proc in psutil.process_iter(['pid', 'cmdline']):
-        try:
-            cmdline = ' '.join(proc.info['cmdline'] or [])
-            if 'supervisor.py' in cmdline:
-                os.kill(proc.info['pid'], signal.SIGTERM)
-                stopped += 1
-        except (psutil.NoSuchProcess, psutil.AccessDenied, ProcessLookupError):
-            pass
-    
-    if stopped > 0:
-        return {"status": "stopped", "message": f"Stopped {stopped} watcher process(es)"}
-    return {"status": "not_running", "message": "No agent was running"}
+    """Disable all agents via Redis (instant soft-pause control)."""
+    # Always use Redis for instant enable/disable (agents always running in ECS)
+    r = get_redis()
+    if not r:
+        return {"status": "error", "message": "Redis unavailable"}
+
+    try:
+        # Disable all agents
+        for agent_type in AGENT_TYPES:
+            r.set(f"agent:{agent_type}:enabled", "0")
+        # Notify agent runners
+        r.publish("agent:control", json.dumps({"action": "stop_all"}))
+        return {"status": "stopped", "message": f"All {len(AGENT_TYPES)} agents disabled"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def _stop_all_agents_ecs():
+    """Stop all agents via ECS API."""
+    try:
+        ecs = boto3.client('ecs')
+        stopped = []
+        for agent_type in AGENT_TYPES:
+            service_name = f"{ECS_CLUSTER}-{agent_type}"
+            ecs.update_service(
+                cluster=ECS_CLUSTER,
+                service=service_name,
+                desiredCount=0
+            )
+            stopped.append(agent_type)
+        return {"status": "stopped", "message": f"Stopped {len(stopped)} agents via ECS"}
+    except Exception as e:
+        logger.error(f"ECS stop_all error: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @app.post("/api/agent/start/{agent_type}")
 async def start_specific_agent(agent_type: str):
-    """Start a specific agent type."""
+    """Enable a specific agent type via Redis (instant soft-pause control)."""
     if agent_type not in AGENT_TYPES:
         return {"status": "error", "message": f"Unknown agent type: {agent_type}"}
-    
-    # Check if already running
-    for proc in psutil.process_iter(['cmdline']):
-        try:
-            cmdline = ' '.join(proc.info['cmdline'] or [])
-            if 'supervisor.py' in cmdline and f'--agent {agent_type}' in cmdline:
-                return {"status": "already_running", "message": f"{agent_type} agent is already running"}
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    
+
+    # Always use Redis for instant enable/disable (agents always running in ECS)
+    r = get_redis()
+    if not r:
+        return {"status": "error", "message": "Redis unavailable"}
+
     try:
-        subprocess.Popen(
-            ['/auto-dev/venv/bin/python', '/auto-dev/watcher/supervisor.py', 
-             '--agent', agent_type],
-            cwd='/auto-dev',
-            stdout=open(f'/auto-dev/logs/{agent_type}.log', 'a'),
-            stderr=subprocess.STDOUT,
-            start_new_session=True
-        )
-        return {"status": "started", "message": f"{agent_type} agent started"}
+        # Set agent as enabled in Redis
+        r.set(f"agent:{agent_type}:enabled", "1")
+        # Publish message to notify agent runner immediately
+        r.publish("agent:control", json.dumps({"action": "start", "agent": agent_type}))
+        return {"status": "started", "message": f"{agent_type} agent enabled"}
     except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def _start_agent_ecs(agent_type: str):
+    """Start a specific agent via ECS API."""
+    try:
+        ecs = boto3.client('ecs')
+        service_name = f"{ECS_CLUSTER}-{agent_type}"
+        ecs.update_service(
+            cluster=ECS_CLUSTER,
+            service=service_name,
+            desiredCount=1
+        )
+        return {"status": "started", "message": f"{agent_type} agent started via ECS"}
+    except Exception as e:
+        logger.error(f"ECS start error for {agent_type}: {e}")
         return {"status": "error", "message": str(e)}
 
 
 @app.post("/api/agent/stop/{agent_type}")
 async def stop_specific_agent(agent_type: str):
-    """Stop a specific agent type."""
-    stopped = 0
-    for proc in psutil.process_iter(['pid', 'cmdline']):
-        try:
-            cmdline = ' '.join(proc.info['cmdline'] or [])
-            if 'supervisor.py' in cmdline and f'--agent {agent_type}' in cmdline:
-                os.kill(proc.info['pid'], signal.SIGTERM)
-                stopped += 1
-        except (psutil.NoSuchProcess, psutil.AccessDenied, ProcessLookupError):
-            pass
-    
-    if stopped > 0:
-        return {"status": "stopped", "message": f"Stopped {agent_type} agent"}
-    return {"status": "not_running", "message": f"{agent_type} agent was not running"}
+    """Disable a specific agent type via Redis (instant soft-pause control)."""
+    if agent_type not in AGENT_TYPES:
+        return {"status": "error", "message": f"Unknown agent type: {agent_type}"}
+
+    # Always use Redis for instant enable/disable (agents always running in ECS)
+    r = get_redis()
+    if not r:
+        return {"status": "error", "message": "Redis unavailable"}
+
+    try:
+        # Set agent as disabled in Redis
+        r.set(f"agent:{agent_type}:enabled", "0")
+        # Publish message to notify agent runner immediately
+        r.publish("agent:control", json.dumps({"action": "stop", "agent": agent_type}))
+        return {"status": "stopped", "message": f"{agent_type} agent disabled"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def _stop_agent_ecs(agent_type: str):
+    """Stop a specific agent via ECS API."""
+    try:
+        ecs = boto3.client('ecs')
+        service_name = f"{ECS_CLUSTER}-{agent_type}"
+        ecs.update_service(
+            cluster=ECS_CLUSTER,
+            service=service_name,
+            desiredCount=0
+        )
+        return {"status": "stopped", "message": f"{agent_type} agent stopped via ECS"}
+    except Exception as e:
+        logger.error(f"ECS stop error for {agent_type}: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+class DatabaseWrapper:
+    """Wrapper to provide consistent interface for SQLite and PostgreSQL."""
+
+    def __init__(self, conn, is_postgres=False):
+        self._conn = conn
+        self._is_postgres = is_postgres
+        self._cursor = None
+
+    def cursor(self):
+        """Return self to allow cursor().execute() pattern."""
+        return self
+
+    def execute(self, query, params=None):
+        """Execute query and return cursor-like object."""
+        # Convert SQLite ? placeholders to PostgreSQL %s
+        if self._is_postgres:
+            query = query.replace('?', '%s')
+
+        if self._is_postgres:
+            self._cursor = self._conn.cursor()
+            if params:
+                self._cursor.execute(query, params)
+            else:
+                self._cursor.execute(query)
+            return self._cursor
+        else:
+            if params:
+                return self._conn.execute(query, params)
+            else:
+                return self._conn.execute(query)
+
+    def commit(self):
+        self._conn.commit()
+
+    def close(self):
+        if self._cursor:
+            self._cursor.close()
+        self._conn.close()
 
 
 def get_orchestrator_db():
-    """Get orchestrator database connection."""
+    """Get orchestrator database connection (PostgreSQL preferred, SQLite fallback)."""
+    # Try PostgreSQL first
+    pg_conn = get_postgres_db()
+    if pg_conn:
+        return DatabaseWrapper(pg_conn, is_postgres=True)
+
+    # Fall back to SQLite
     if not ORCHESTRATOR_DB_PATH.exists():
         return None
     conn = sqlite3.connect(ORCHESTRATOR_DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
+    return DatabaseWrapper(conn, is_postgres=False)
+
+
+def get_postgres_db():
+    """Get PostgreSQL database connection."""
+    if not HAS_PSYCOPG2:
+        return None
+
+    # Check for individual connection params (Docker environment)
+    db_host = os.environ.get('DB_HOST')
+    db_user = os.environ.get('DB_USER')
+    db_password = os.environ.get('DB_PASSWORD')
+    db_name = os.environ.get('DB_NAME')
+
+    if db_host and db_user and db_name:
+        try:
+            conn = psycopg2.connect(
+                host=db_host,
+                user=db_user,
+                password=db_password or '',
+                dbname=db_name,
+                cursor_factory=psycopg2.extras.RealDictCursor
+            )
+            return conn
+        except Exception as e:
+            print(f"PostgreSQL connection error: {e}")
+
+    # Check for DATABASE_URL
+    database_url = os.environ.get('DATABASE_URL')
+    if database_url:
+        try:
+            conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+            return conn
+        except Exception as e:
+            print(f"PostgreSQL connection error: {e}")
+
+    return None
+
+
+def get_redis():
+    """Get Redis connection for agent control."""
+    if not HAS_REDIS:
+        return None
+    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    try:
+        return redis.from_url(redis_url)
+    except Exception as e:
+        print(f"Redis connection error: {e}")
+        return None
+
+
+def init_postgres_schema():
+    """Initialize PostgreSQL schema if tables don't exist."""
+    if not HAS_PSYCOPG2:
+        print("PostgreSQL driver not available, skipping schema init")
+        return
+
+    conn = get_postgres_db()
+    if not conn:
+        print("No PostgreSQL connection available, skipping schema init")
+        return
+
+    try:
+        cursor = conn.cursor()
+
+        # Check if tables exist
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'tasks'
+            ) as table_exists
+        """)
+        result = cursor.fetchone()
+        tables_exist = result.get('table_exists', False) if isinstance(result, dict) else result[0]
+
+        if tables_exist:
+            print("Database schema exists, checking for missing columns...")
+            # Add missing columns and fix constraints
+            migrations = [
+                "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMP",
+                "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS needs_approval INTEGER DEFAULT 0",
+                "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS approval_status TEXT",
+                "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS approved_by TEXT",
+                "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP",
+                "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS rejection_reason TEXT",
+                # Fix status check constraint to include 'claimed'
+                "ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check",
+                "ALTER TABLE tasks ADD CONSTRAINT tasks_status_check CHECK (status IN ('pending', 'claimed', 'in_progress', 'completed', 'failed', 'cancelled'))",
+            ]
+            for migration in migrations:
+                try:
+                    cursor.execute(migration)
+                    conn.commit()
+                except Exception as e:
+                    print(f"Migration note: {e}")
+                    conn.rollback()
+            print("Schema migrations complete")
+            cursor.close()
+            conn.close()
+            return
+
+        print("Initializing database schema...")
+
+        # Execute each statement separately for better error handling
+        statements = [
+            'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"',
+
+            """CREATE TABLE IF NOT EXISTS repos (
+                id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                name TEXT NOT NULL,
+                slug TEXT UNIQUE NOT NULL,
+                gitlab_url TEXT NOT NULL,
+                gitlab_project_id TEXT NOT NULL,
+                default_branch TEXT DEFAULT 'main',
+                autonomy_mode TEXT DEFAULT 'guided' CHECK (autonomy_mode IN ('full', 'guided')),
+                settings JSONB DEFAULT '{}',
+                webhook_secret_hash TEXT,
+                token_ssm_path TEXT,
+                mr_prefix TEXT DEFAULT '[AUTO-DEV]',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW(),
+                active BOOLEAN DEFAULT true
+            )""",
+
+            """CREATE TABLE IF NOT EXISTS tasks (
+                id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                repo_id UUID REFERENCES repos(id) ON DELETE CASCADE,
+                task_type TEXT NOT NULL,
+                status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'claimed', 'in_progress', 'completed', 'failed', 'cancelled')),
+                priority INTEGER DEFAULT 5 CHECK (priority BETWEEN 1 AND 10),
+                payload JSONB DEFAULT '{}',
+                result JSONB,
+                error TEXT,
+                created_by TEXT,
+                assigned_to TEXT,
+                assigned_agent TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                claimed_at TIMESTAMP,
+                started_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                retry_count INTEGER DEFAULT 0,
+                max_retries INTEGER DEFAULT 3,
+                needs_approval INTEGER DEFAULT 0,
+                approval_status TEXT,
+                approved_by TEXT,
+                approved_at TIMESTAMP,
+                rejection_reason TEXT
+            )""",
+
+            """CREATE TABLE IF NOT EXISTS approvals (
+                id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                repo_id UUID REFERENCES repos(id) ON DELETE CASCADE,
+                task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
+                approval_type TEXT NOT NULL CHECK (approval_type IN ('spec', 'merge', 'issue_creation', 'deploy')),
+                status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+                payload JSONB DEFAULT '{}',
+                reviewer TEXT,
+                review_comment TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                reviewed_at TIMESTAMP,
+                auto_approved BOOLEAN DEFAULT false,
+                auto_approve_reason TEXT
+            )""",
+
+            """CREATE TABLE IF NOT EXISTS agent_status (
+                id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                agent_type TEXT NOT NULL,
+                repo_id UUID REFERENCES repos(id) ON DELETE SET NULL,
+                status TEXT DEFAULT 'idle' CHECK (status IN ('idle', 'running', 'error', 'stopped')),
+                current_task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+                last_heartbeat TIMESTAMP DEFAULT NOW(),
+                session_started TIMESTAMP,
+                metadata JSONB DEFAULT '{}'
+            )""",
+
+            """CREATE TABLE IF NOT EXISTS reflections (
+                id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                repo_id UUID REFERENCES repos(id) ON DELETE CASCADE,
+                task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+                agent_type TEXT NOT NULL,
+                reflection_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                confidence FLOAT DEFAULT 0.5,
+                tags TEXT[],
+                created_at TIMESTAMP DEFAULT NOW()
+            )""",
+
+            """CREATE TABLE IF NOT EXISTS learnings (
+                id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                repo_id UUID REFERENCES repos(id) ON DELETE CASCADE,
+                agent_type TEXT NOT NULL,
+                category TEXT NOT NULL,
+                insight TEXT NOT NULL,
+                confidence FLOAT DEFAULT 0.5,
+                usage_count INTEGER DEFAULT 0,
+                last_used TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW(),
+                active BOOLEAN DEFAULT true
+            )""",
+
+            """CREATE TABLE IF NOT EXISTS gitlab_objects (
+                id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                repo_id UUID REFERENCES repos(id) ON DELETE CASCADE,
+                object_type TEXT NOT NULL CHECK (object_type IN ('epic', 'issue', 'merge_request', 'pipeline')),
+                gitlab_id INTEGER NOT NULL,
+                gitlab_iid INTEGER,
+                title TEXT,
+                state TEXT,
+                labels TEXT[],
+                created_by_agent TEXT,
+                task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+                metadata JSONB DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(repo_id, object_type, gitlab_id)
+            )""",
+
+            "CREATE INDEX IF NOT EXISTS idx_tasks_repo_status ON tasks(repo_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON tasks(status, priority DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to)",
+            "CREATE INDEX IF NOT EXISTS idx_approvals_repo_status ON approvals(repo_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_approvals_pending ON approvals(status) WHERE status = 'pending'",
+            "CREATE INDEX IF NOT EXISTS idx_approvals_created_at ON approvals(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_status_type ON agent_status(agent_type)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_status_heartbeat ON agent_status(last_heartbeat DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_reflections_repo_agent ON reflections(repo_id, agent_type)",
+            "CREATE INDEX IF NOT EXISTS idx_learnings_repo_agent ON learnings(repo_id, agent_type) WHERE active = true",
+            "CREATE INDEX IF NOT EXISTS idx_gitlab_objects_repo_type ON gitlab_objects(repo_id, object_type)",
+        ]
+
+        for stmt in statements:
+            try:
+                cursor.execute(stmt)
+            except Exception as e:
+                print(f"Warning: Statement failed (may already exist): {e}")
+                conn.rollback()
+                cursor = conn.cursor()  # Get a fresh cursor after rollback
+
+        conn.commit()
+        print("Database schema initialized successfully")
+
+    except Exception as e:
+        print(f"Error initializing database schema: {e}")
+        try:
+            conn.rollback()
+        except:
+            pass
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except:
+            pass
+
+
+# Initialize database schema on startup
+init_postgres_schema()
 
 
 @app.get("/api/tasks")
@@ -453,8 +1134,8 @@ async def get_tasks(status: str = None, limit: int = 50):
         tasks = []
         for row in cursor.fetchall():
             task = dict(row)
-            task['payload'] = json.loads(task['payload']) if task['payload'] else {}
-            task['result'] = json.loads(task['result']) if task.get('result') else None
+            task['payload'] = parse_json_field(task['payload']) or {}
+            task['result'] = parse_json_field(task.get('result'))
             tasks.append(task)
         
         # Get stats
@@ -491,7 +1172,7 @@ async def create_task(request: Request):
             payload['repo_id'] = repo_id
 
         conn.execute("""
-            INSERT INTO tasks (id, type, priority, payload, status, created_by, created_at, assigned_to, repo_id)
+            INSERT INTO tasks (id, task_type, priority, payload, status, created_by, created_at, assigned_to, repo_id)
             VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
         """, (
             task_id,
@@ -542,8 +1223,8 @@ async def get_agent_tasks(agent: str = None, status: str = None, limit: int = 10
         agents = {}
         for row in cursor.fetchall():
             task = dict(row)
-            task['payload'] = json.loads(task['payload']) if task['payload'] else {}
-            task['result'] = json.loads(task['result']) if task.get('result') else None
+            task['payload'] = parse_json_field(task['payload']) or {}
+            task['result'] = parse_json_field(task.get('result'))
             
             agent_id = task.get('assigned_to') or 'unassigned'
             if agent_id not in agents:
@@ -573,64 +1254,190 @@ async def get_agent_tasks(agent: str = None, status: str = None, limit: int = 10
         conn.close()
 
 
-@app.get("/agents", response_class=HTMLResponse)
-async def agents_page():
-    """Serve the agent activity page."""
-    return AGENTS_PAGE_HTML
-
-
-@app.get("/projects", response_class=HTMLResponse)
-async def projects_page():
-    """Serve the project approvals page."""
-    return PROJECTS_PAGE_HTML
-
-
-@app.get("/repos", response_class=HTMLResponse)
-async def repos_page():
-    """Serve the repository management page."""
-    return REPOS_PAGE_HTML
+# React app routes - serve index.html for client-side routing
+@app.get("/agents")
+@app.get("/repos")
+@app.get("/tasks")
+@app.get("/approvals")
+@app.get("/settings")
+@app.get("/projects")
+async def react_routes():
+    """Serve React app for all frontend routes."""
+    react_index = REACT_BUILD_PATH / "index.html"
+    if react_index.exists():
+        return FileResponse(react_index)
+    # Fallback to legacy HTML
+    return HTMLResponse(content=DASHBOARD_HTML)
 
 
 @app.get("/api/agent-statuses")
 async def get_agent_statuses():
-    """Get status of all agents from orchestrator."""
+    """Get status of all agents (ECS or database based on deployment mode)."""
+    # Use ECS API if in ECS mode
+    if USE_ECS and HAS_BOTO3:
+        return await _get_agent_statuses_ecs()
+
+    # Fallback to database/Redis based status
     conn = get_orchestrator_db()
+    r = get_redis()
     statuses = {}
-    
+
     # Initialize with defaults
     for agent_type in AGENT_TYPES:
         statuses[agent_type] = {
             "agent_id": agent_type,
             "status": "offline",
+            "enabled": True,  # Default to enabled
             "current_task_id": None,
             "tasks_completed": 0,
             "tokens_used": 0
         }
-    
+
+    # Get enabled state from Redis
+    if r:
+        try:
+            for agent_type in AGENT_TYPES:
+                enabled = r.get(f"agent:{agent_type}:enabled")
+                # If key doesn't exist, default to enabled (None means enabled)
+                statuses[agent_type]["enabled"] = enabled is None or enabled == b"1"
+        except Exception as e:
+            print(f"Redis error getting agent states: {e}")
+
     # Get from orchestrator DB if available
     if conn:
         try:
+            # Use DatabaseWrapper's execute method
             cursor = conn.execute("SELECT * FROM agent_status")
             for row in cursor.fetchall():
-                agent_id = row['agent_id']
+                # Convert row to dict first
+                row_dict = dict(row)
+                # PostgreSQL uses 'agent_type', SQLite uses 'agent_id'
+                agent_id = row_dict.get('agent_type') or row_dict.get('agent_id')
                 if agent_id in statuses:
-                    statuses[agent_id] = dict(row)
+                    row_dict['agent_id'] = agent_id  # Normalize field name
+                    # Preserve enabled state from Redis
+                    row_dict['enabled'] = statuses[agent_id]['enabled']
+                    statuses[agent_id] = row_dict
         finally:
             conn.close()
-    
-    # Check which are actually running via process list
-    for proc in psutil.process_iter(['cmdline']):
+
+    # Update status based on enabled state
+    for agent_type in AGENT_TYPES:
+        if not statuses[agent_type]['enabled']:
+            statuses[agent_type]['status'] = 'disabled'
+
+    # Check for global rate limit
+    rate_limit_info = None
+    rate_limit_file = Path('/auto-dev/data/.rate_limited')
+    if rate_limit_file.exists():
         try:
-            cmdline = ' '.join(proc.info['cmdline'] or [])
-            if 'supervisor.py' in cmdline:
-                for agent_type in AGENT_TYPES:
-                    if f'--agent {agent_type}' in cmdline:
-                        if statuses[agent_type]['status'] == 'offline':
-                            statuses[agent_type]['status'] = 'online'
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            import json
+            data = json.loads(rate_limit_file.read_text())
+            reset_time = data.get('reset_time')
+            if reset_time:
+                from datetime import datetime
+                reset_dt = datetime.fromisoformat(reset_time)
+                if datetime.utcnow() < reset_dt:
+                    rate_limit_info = {
+                        'limited': True,
+                        'provider': data.get('provider', 'unknown'),
+                        'reset_time': reset_time,
+                        'set_by': data.get('agent_id'),
+                        'remaining_seconds': int((reset_dt - datetime.utcnow()).total_seconds())
+                    }
+        except Exception:
             pass
-    
-    return {"agents": statuses}
+
+    return {"agents": statuses, "rate_limit": rate_limit_info}
+
+
+async def _get_agent_statuses_ecs():
+    """Get agent statuses from ECS services + Redis enabled state."""
+    statuses = {}
+
+    # Initialize with defaults (all agents run continuously)
+    for agent_type in AGENT_TYPES:
+        statuses[agent_type] = {
+            "agent_id": agent_type,
+            "status": "offline",
+            "enabled": True,  # Default to enabled
+            "current_task_id": None,
+            "tasks_completed": 0,
+            "tokens_used": 0,
+            "running_count": 0,
+            "desired_count": 1
+        }
+
+    # Get enabled state from Redis (soft pause control)
+    r = get_redis()
+    if r:
+        try:
+            for agent_type in AGENT_TYPES:
+                enabled = r.get(f"agent:{agent_type}:enabled")
+                # If key doesn't exist, default to enabled (None means enabled)
+                statuses[agent_type]["enabled"] = enabled is None or enabled == b"1"
+        except Exception as e:
+            logger.error(f"Redis error getting agent states: {e}")
+
+    try:
+        ecs = boto3.client('ecs')
+        service_names = [f"{ECS_CLUSTER}-{agent}" for agent in AGENT_TYPES]
+
+        # Get service status from ECS
+        response = ecs.describe_services(
+            cluster=ECS_CLUSTER,
+            services=service_names
+        )
+
+        for svc in response.get('services', []):
+            # Extract agent type from service name
+            service_name = svc['serviceName']
+            agent_type = service_name.replace(f"{ECS_CLUSTER}-", "")
+
+            if agent_type in statuses:
+                running = svc.get('runningCount', 0)
+                desired = svc.get('desiredCount', 0)
+                enabled = statuses[agent_type]["enabled"]
+
+                # Determine status based on ECS state + Redis enabled
+                if running > 0:
+                    status = "online" if enabled else "paused"
+                elif desired > 0:
+                    status = "starting"
+                else:
+                    status = "offline"
+
+                statuses[agent_type].update({
+                    "status": status,
+                    "running_count": running,
+                    "desired_count": desired
+                })
+
+    except Exception as e:
+        logger.error(f"Error getting ECS agent statuses: {e}")
+
+    # Also check database for task stats
+    conn = get_orchestrator_db()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT assigned_agent, COUNT(*) as completed
+                FROM tasks
+                WHERE status = 'completed'
+                GROUP BY assigned_agent
+            """)
+            for row in cursor.fetchall():
+                row_dict = dict(row)
+                agent_id = row_dict.get('assigned_agent')
+                if agent_id in statuses:
+                    statuses[agent_id]['tasks_completed'] = row_dict.get('completed', 0)
+        except Exception as e:
+            logger.debug(f"Error getting task stats: {e}")
+        finally:
+            conn.close()
+
+    return {"agents": statuses, "rate_limit": None}
 
 
 @app.get("/api/agent-providers")
@@ -777,7 +1584,7 @@ async def get_messages(agent_id: str = None, limit: int = 50):
         messages = []
         for row in cursor.fetchall():
             msg = dict(row)
-            msg['payload'] = json.loads(msg['payload']) if msg['payload'] else {}
+            msg['payload'] = parse_json_field(msg['payload']) or {}
             messages.append(msg)
         
         return {"messages": messages}
@@ -836,7 +1643,7 @@ async def get_proposals(status: str = None):
         proposals = []
         for row in cursor.fetchall():
             p = dict(row)
-            p['payload'] = json.loads(p['payload']) if p['payload'] else {}
+            p['payload'] = parse_json_field(p['payload']) or {}
             p['votes_for'] = json.loads(p['votes_for']) if p['votes_for'] else []
             p['votes_against'] = json.loads(p['votes_against']) if p['votes_against'] else []
             p['comments'] = json.loads(p['comments']) if p['comments'] else []
@@ -889,13 +1696,13 @@ async def approve_item(item_id: str, request: Request):
     try:
         body = await request.json()
         notes = body.get('notes', '')
-    except:
+    except (json.JSONDecodeError, ValueError, AttributeError):
         notes = ''
-    
+
     conn = get_orchestrator_db()
     if not conn:
         return JSONResponse({"error": "Database unavailable"}, status_code=500)
-    
+
     try:
         now = datetime.utcnow().isoformat()
         cursor = conn.execute("""
@@ -953,21 +1760,22 @@ async def send_chat(request: Request):
     try:
         body = await request.json()
         message = body.get('message', '')
-    except:
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning(f"Invalid chat request: {e}")
         return JSONResponse({"error": "Invalid request"}, status_code=400)
-    
+
     if not message:
         return JSONResponse({"error": "Message required"}, status_code=400)
-    
+
     conn = get_orchestrator_db()
     if not conn:
         return JSONResponse({"error": "Database unavailable"}, status_code=500)
-    
+
     try:
         import uuid
         now = datetime.utcnow().isoformat()
         post_id = str(uuid.uuid4())
-        
+
         # Post human message to chat topic
         conn.execute("""
             INSERT INTO discussions (id, author, topic, content, created_at)
@@ -1031,9 +1839,10 @@ async def send_directive(request: Request):
         body = await request.json()
         message = body.get('message', '')
         priority = body.get('priority', 10)
-    except:
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning(f"Invalid directive request: {e}")
         return JSONResponse({"error": "Invalid request"}, status_code=400)
-    
+
     if not message:
         return JSONResponse({"error": "Message required"}, status_code=400)
     
@@ -1053,10 +1862,10 @@ async def send_directive(request: Request):
         """, (post_id, 'human', 'directive', f"🎯 HUMAN DIRECTIVE (Priority {priority}): {message}", now))
         
         # Create high-priority tasks for all agents
-        for agent in ['hunter', 'critic', 'builder', 'tester', 'publisher', 'meta']:
+        for agent in AGENT_TYPES:
             task_id = str(uuid.uuid4())
             conn.execute("""
-                INSERT INTO tasks (id, type, priority, payload, status, assigned_to, created_by, created_at)
+                INSERT INTO tasks (id, task_type, priority, payload, status, assigned_to, created_by, created_at)
                 VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
             """, (
                 task_id, 'directive', priority,
@@ -1078,17 +1887,17 @@ async def reject_item(item_id: str, request: Request):
     try:
         body = await request.json()
         reason = body.get('reason', 'No reason provided')
-    except:
+    except (json.JSONDecodeError, ValueError, AttributeError):
         reason = 'No reason provided'
-    
+
     conn = get_orchestrator_db()
     if not conn:
         return JSONResponse({"error": "Database unavailable"}, status_code=500)
-    
+
     try:
         now = datetime.utcnow().isoformat()
         cursor = conn.execute("""
-            UPDATE approval_queue 
+            UPDATE approval_queue
             SET status = 'rejected', reviewer_notes = ?, reviewed_at = ?
             WHERE id = ? AND status = 'pending'
         """, (reason, now, item_id))
@@ -1230,9 +2039,9 @@ async def approve_project(project_id: str, request: Request):
     try:
         body = await request.json()
         notes = body.get('notes', '')
-    except:
+    except (json.JSONDecodeError, ValueError, AttributeError):
         notes = ''
-    
+
     conn = get_orchestrator_db()
     if not conn:
         return JSONResponse({"error": "Database unavailable"}, status_code=500)
@@ -1295,9 +2104,9 @@ async def reject_project(project_id: str, request: Request):
     try:
         body = await request.json()
         reason = body.get('reason', 'No reason provided')
-    except:
+    except (json.JSONDecodeError, ValueError, AttributeError):
         reason = 'No reason provided'
-    
+
     conn = get_orchestrator_db()
     if not conn:
         return JSONResponse({"error": "Database unavailable"}, status_code=500)
@@ -1340,9 +2149,9 @@ async def defer_project(project_id: str, request: Request):
     try:
         body = await request.json()
         notes = body.get('notes', 'Deferred for later review')
-    except:
+    except (json.JSONDecodeError, ValueError, AttributeError):
         notes = 'Deferred for later review'
-    
+
     conn = get_orchestrator_db()
     if not conn:
         return JSONResponse({"error": "Database unavailable"}, status_code=500)
@@ -3149,7 +3958,37 @@ DASHBOARD_HTML = """
         .agents-info strong {
             color: var(--accent-blue);
         }
-        
+
+        .rate-limit-banner {
+            background: linear-gradient(135deg, #f59e0b22, #ef444422);
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: pulse-border 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse-border {
+            0%, 100% { border-color: #f59e0b; }
+            50% { border-color: #ef4444; }
+        }
+
+        .rate-limit-icon {
+            font-size: 24px;
+        }
+
+        .rate-limit-text {
+            color: #fbbf24;
+            font-size: 14px;
+        }
+
+        .rate-limit-text strong {
+            color: #f59e0b;
+        }
+
         .agent-cards {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -3634,6 +4473,15 @@ DASHBOARD_HTML = """
             <span>📋 Tasks: <strong id="taskCount">0</strong> pending</span>
         </div>
         
+        <!-- Rate Limit Banner -->
+        <div class="rate-limit-banner" id="rateLimitBanner" style="display: none;">
+            <span class="rate-limit-icon">⏳</span>
+            <span class="rate-limit-text">
+                <strong id="rateLimitProvider">Provider</strong> rate limited.
+                Resets in <strong id="rateLimitCountdown">--:--</strong>
+            </span>
+        </div>
+
         <!-- Agent Status Cards - dynamically loaded from settings.yaml -->
         <div class="agent-cards" id="agentCards">
             <div class="empty-state">Loading agents...</div>
@@ -4120,6 +4968,24 @@ DASHBOARD_HTML = """
                 }
                 
                 document.getElementById('agentCount').textContent = activeCount;
+
+                // Handle rate limit banner
+                const rateLimitBanner = document.getElementById('rateLimitBanner');
+                const rateLimit = data.rate_limit;
+                if (rateLimit && rateLimit.limited) {
+                    rateLimitBanner.style.display = 'flex';
+                    document.getElementById('rateLimitProvider').textContent =
+                        rateLimit.provider.charAt(0).toUpperCase() + rateLimit.provider.slice(1);
+
+                    // Format countdown
+                    const remaining = rateLimit.remaining_seconds;
+                    const mins = Math.floor(remaining / 60);
+                    const secs = remaining % 60;
+                    document.getElementById('rateLimitCountdown').textContent =
+                        `${mins}:${secs.toString().padStart(2, '0')}`;
+                } else {
+                    rateLimitBanner.style.display = 'none';
+                }
             } catch (error) {
                 console.error('Failed to fetch agent statuses:', error);
             }

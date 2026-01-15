@@ -16,6 +16,7 @@ import json
 import uuid
 import os
 import logging
+import threading
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Union
 from dataclasses import dataclass, asdict, field
@@ -35,6 +36,18 @@ except ImportError:
 
 # SQLite fallback
 import sqlite3
+
+
+def parse_json_field(value):
+    """Parse JSON field handling both string (SQLite) and dict (PostgreSQL JSONB)."""
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return value
 
 # Redis for real-time notifications
 try:
@@ -97,6 +110,28 @@ class TaskStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+# Compatibility aliases for agent_runner.py
+class TaskType(Enum):
+    """Compatibility alias for TaskType used by agent_runner."""
+    SCAN_PLATFORM = "scan_platform"
+    BUILD_PRODUCT = "build_product"
+    DEPLOY = "deploy"
+    WRITE_CONTENT = "write_content"
+    MARKET = "market"
+    RESEARCH = "research"
+    HANDOFF = "handoff"
+    PUBLISH = "publish"
+
+
+class MessageType(Enum):
+    """Types of inter-agent messages (compatibility for agent_runner)."""
+    HANDOFF = "handoff"
+    REQUEST = "request"
+    NOTIFY = "notify"
+    COMPLETED = "completed"
+    BLOCKED = "blocked"
 
 
 class DevApprovalType(Enum):
@@ -267,7 +302,9 @@ class DatabaseConnection:
 
             try:
                 return cursor.fetchall()
-            except:
+            except Exception as e:
+                # Query didn't return results (e.g., INSERT/UPDATE)
+                logger.debug(f"Query did not return results (expected for INSERT/UPDATE): {e}")
                 return None
 
     def execute_one(self, query: str, params: tuple = None) -> Any:
@@ -327,6 +364,17 @@ class MultiTenantOrchestrator:
             cursor = conn.cursor()
             p = self.db.placeholder
 
+            # For PostgreSQL, check if tables exist and skip if they do
+            # (the existing schema may differ but should be compatible)
+            if self.db.db_type == 'postgresql':
+                cursor.execute("""
+                    SELECT COUNT(*) FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'repos'
+                """)
+                if cursor.fetchone()[0] > 0:
+                    logger.info("PostgreSQL tables already exist, skipping schema creation")
+                    return
+
             # Repos table - central registry of managed repositories
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS repos (
@@ -345,11 +393,12 @@ class MultiTenantOrchestrator:
             """)
 
             # Tasks table with repo_id for multi-tenant isolation
+            # Note: Using task_type to match PostgreSQL schema
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY,
                     repo_id TEXT NOT NULL,
-                    type TEXT NOT NULL,
+                    task_type TEXT NOT NULL,
                     priority INTEGER DEFAULT 5,
                     payload TEXT NOT NULL,
                     status TEXT DEFAULT 'pending',
@@ -360,9 +409,39 @@ class MultiTenantOrchestrator:
                     completed_at TEXT,
                     result TEXT,
                     error TEXT,
+                    needs_approval INTEGER DEFAULT 0,
+                    approval_status TEXT,
+                    approval_type TEXT,
+                    approved_by TEXT,
+                    approved_at TEXT,
+                    rejection_reason TEXT,
                     FOREIGN KEY (repo_id) REFERENCES repos(id)
                 )
             """)
+
+            # Add approval columns to existing tasks table (migration)
+            # Whitelist of allowed columns to prevent SQL injection
+            ALLOWED_MIGRATION_COLUMNS = {
+                'needs_approval': ('INTEGER', '0'),
+                'approval_status': ('TEXT', None),
+                'approval_type': ('TEXT', None),
+                'approved_by': ('TEXT', None),
+                'approved_at': ('TEXT', None),
+                'rejection_reason': ('TEXT', None),
+            }
+            for col, (col_type, default) in ALLOWED_MIGRATION_COLUMNS.items():
+                # Validate column name is alphanumeric with underscores only
+                if not col.replace('_', '').isalnum():
+                    logger.warning(f"Skipping invalid column name: {col}")
+                    continue
+                try:
+                    if default is not None:
+                        cursor.execute(f"ALTER TABLE tasks ADD COLUMN {col} {col_type} DEFAULT {default}")
+                    else:
+                        cursor.execute(f"ALTER TABLE tasks ADD COLUMN {col} {col_type}")
+                except Exception as e:
+                    # Column already exists - expected on subsequent runs
+                    logger.debug(f"Migration column {col} already exists or failed: {e}")
 
             # Dev approvals table
             cursor.execute("""
@@ -460,14 +539,15 @@ class MultiTenantOrchestrator:
         gitlab_project_id: str,
         default_branch: str = "main",
         autonomy_mode: str = "guided",
-        settings: Dict[str, Any] = None
+        settings: Dict[str, Any] = None,
+        repo_id: str = None
     ) -> Repo:
         """Create a new managed repository."""
         # Generate slug from name
         slug = name.lower().replace(' ', '-').replace('/', '-')
 
         repo = Repo(
-            id=str(uuid.uuid4()),
+            id=repo_id or str(uuid.uuid4()),
             name=name,
             gitlab_url=gitlab_url,
             gitlab_project_id=gitlab_project_id,
@@ -515,16 +595,30 @@ class MultiTenantOrchestrator:
             return None
         return self._row_to_repo(row)
 
-    def list_repos(self, status: str = None) -> List[Repo]:
+    def list_repos(self, status: str = None, active_only: bool = False) -> List[Repo]:
         """List all repositories."""
         if status:
-            rows = self.db.execute(
-                f"SELECT * FROM repos WHERE status = {self.db.placeholder} ORDER BY name",
-                (status,)
-            )
+            # For PostgreSQL with 'active' boolean column
+            if status == 'active':
+                rows = self.db.execute("SELECT * FROM repos WHERE active = true ORDER BY name")
+            else:
+                rows = self.db.execute("SELECT * FROM repos WHERE active = false ORDER BY name")
+        elif active_only:
+            rows = self.db.execute("SELECT * FROM repos WHERE active = true ORDER BY name")
         else:
             rows = self.db.execute("SELECT * FROM repos ORDER BY name")
         return [self._row_to_repo(row) for row in rows]
+
+    def delete_repo(self, repo_id: str) -> bool:
+        """Delete a repository."""
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"DELETE FROM repos WHERE id = {self.db.placeholder}",
+                (repo_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
 
     def update_repo(self, repo_id: str, **updates) -> bool:
         """Update repository settings."""
@@ -548,34 +642,53 @@ class MultiTenantOrchestrator:
     def _row_to_repo(self, row) -> Repo:
         """Convert database row to Repo object."""
         if hasattr(row, 'keys'):
-            # Dict-like row
+            # Dict-like row (PostgreSQL RealDictRow or SQLite Row)
+            # Handle settings - might be dict (jsonb) or string (json text)
+            settings = row.get('settings', {})
+            if isinstance(settings, str):
+                settings = parse_json_field(settings) or {}
+
+            # Handle status vs active column
+            if 'status' in row.keys():
+                status = row['status']
+            else:
+                status = 'active' if row.get('active') else 'inactive'
+
+            # Handle timestamps - might be datetime or string
+            created_at = row.get('created_at', '')
+            if hasattr(created_at, 'isoformat'):
+                created_at = created_at.isoformat()
+            updated_at = row.get('updated_at', '')
+            if hasattr(updated_at, 'isoformat'):
+                updated_at = updated_at.isoformat()
+
             return Repo(
-                id=row['id'],
+                id=str(row['id']),  # Convert UUID to string if needed
                 name=row['name'],
                 gitlab_url=row['gitlab_url'],
-                gitlab_project_id=row['gitlab_project_id'],
+                gitlab_project_id=str(row['gitlab_project_id']),
                 slug=row['slug'],
-                default_branch=row['default_branch'],
-                autonomy_mode=row['autonomy_mode'],
-                settings=json.loads(row['settings']) if row['settings'] else {},
-                status=row['status'],
-                created_at=row['created_at'],
-                updated_at=row['updated_at']
+                default_branch=row.get('default_branch', 'main'),
+                autonomy_mode=row.get('autonomy_mode', 'guided'),
+                settings=settings,
+                status=status,
+                created_at=str(created_at),
+                updated_at=str(updated_at)
             )
         else:
-            # Tuple row
+            # Tuple row - use positional access (SQLite fallback)
             return Repo(
-                id=row[0],
+                id=str(row[0]),
                 name=row[1],
                 gitlab_url=row[2],
-                gitlab_project_id=row[3],
+                gitlab_project_id=str(row[3]),
                 slug=row[4],
-                default_branch=row[5],
-                autonomy_mode=row[6],
-                settings=json.loads(row[7]) if row[7] else {},
-                status=row[8],
-                created_at=row[9],
-                updated_at=row[10]
+                default_branch=row[5] if len(row) > 5 else 'main',
+                autonomy_mode=row[6] if len(row) > 6 else 'guided',
+                settings=parse_json_field(row[7]) if len(row) > 7 else {},
+                status=row[8] if len(row) > 8 else 'active',
+                created_at=str(row[9]) if len(row) > 9 else '',
+                updated_at=str(row[10]) if len(row) > 10 else ''
             )
 
     # ==================== Task Queue ====================
@@ -605,7 +718,7 @@ class MultiTenantOrchestrator:
             p = self.db.placeholder
             cursor.execute(f"""
                 INSERT INTO tasks
-                (id, repo_id, type, priority, payload, status, assigned_to, created_by, created_at)
+                (id, repo_id, task_type, priority, payload, status, assigned_to, created_by, created_at)
                 VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
             """, (
                 task.id, task.repo_id, task.type, task.priority,
@@ -632,7 +745,10 @@ class MultiTenantOrchestrator:
         task_types: Optional[List[str]] = None
     ) -> Optional[Task]:
         """
-        Claim the highest priority available task.
+        Claim the highest priority available task atomically.
+
+        Uses FOR UPDATE SKIP LOCKED on PostgreSQL to prevent race conditions
+        where multiple agents try to claim the same task.
 
         Args:
             agent_id: ID of the claiming agent
@@ -642,48 +758,81 @@ class MultiTenantOrchestrator:
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
             p = self.db.placeholder
+            now = datetime.utcnow().isoformat()
 
-            # Build query
-            conditions = ["status = 'pending'", f"(assigned_to IS NULL OR assigned_to = {p})"]
-            params = [agent_id]
+            # Build WHERE conditions
+            # Key logic: Tasks directly assigned to this agent can be claimed regardless of task_type.
+            # Task type filtering only applies to unassigned tasks to prevent agents from claiming
+            # tasks they shouldn't handle. This allows human directives to reach specific agents.
+            conditions = ["status = 'pending'"]
+            params = []
 
             if repo_id:
                 conditions.append(f"repo_id = {p}")
                 params.append(repo_id)
 
+            # Build the assignment/task_type condition:
+            # Either: task is assigned directly to this agent (claim regardless of type)
+            # Or: task is unassigned AND matches agent's task types
             if task_types:
                 placeholders = ', '.join([p] * len(task_types))
-                conditions.append(f"type IN ({placeholders})")
+                # Tasks assigned to this agent OR unassigned tasks matching agent's task types
+                assignment_condition = f"(assigned_to = {p} OR (assigned_to IS NULL AND task_type IN ({placeholders})))"
+                conditions.append(assignment_condition)
+                params.append(agent_id)
                 params.extend(task_types)
+            else:
+                # No task_type filter - can claim any task assigned to this agent or unassigned
+                conditions.append(f"(assigned_to IS NULL OR assigned_to = {p})")
+                params.append(agent_id)
 
             where_clause = ' AND '.join(conditions)
 
-            # Find and claim task atomically
-            cursor.execute(f"""
-                SELECT * FROM tasks
-                WHERE {where_clause}
-                ORDER BY priority DESC, created_at ASC
-                LIMIT 1
-            """, params)
+            if self.db.db_type == 'postgresql':
+                # PostgreSQL: Use atomic UPDATE...FROM...RETURNING with FOR UPDATE SKIP LOCKED
+                # This prevents race conditions by locking the selected row
+                cursor.execute(f"""
+                    UPDATE tasks
+                    SET status = 'claimed', assigned_to = {p}, claimed_at = {p}
+                    WHERE id = (
+                        SELECT id FROM tasks
+                        WHERE {where_clause}
+                        ORDER BY priority DESC, created_at ASC
+                        LIMIT 1
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    RETURNING *
+                """, [agent_id, now] + params)
+                row = cursor.fetchone()
+            else:
+                # SQLite: Use two-step approach with immediate transaction
+                # SQLite's locking is database-level, so less prone to races
+                cursor.execute(f"""
+                    SELECT id FROM tasks
+                    WHERE {where_clause}
+                    ORDER BY priority DESC, created_at ASC
+                    LIMIT 1
+                """, params)
+                id_row = cursor.fetchone()
+                if not id_row:
+                    return None
 
-            row = cursor.fetchone()
-            if not row:
-                return None
+                task_id = id_row[0] if isinstance(id_row, tuple) else id_row['id']
+                cursor.execute(f"""
+                    UPDATE tasks
+                    SET status = 'claimed', assigned_to = {p}, claimed_at = {p}
+                    WHERE id = {p} AND status = 'pending'
+                """, (agent_id, now, task_id))
 
-            task_id = row[0] if isinstance(row, tuple) else row['id']
-            now = datetime.utcnow().isoformat()
+                # Check if update succeeded (another agent may have claimed it)
+                if cursor.rowcount == 0:
+                    return None
 
-            # Claim it
-            cursor.execute(f"""
-                UPDATE tasks
-                SET status = 'claimed', assigned_to = {p}, claimed_at = {p}
-                WHERE id = {p} AND status = 'pending'
-            """, (agent_id, now, task_id))
+                cursor.execute(f"SELECT * FROM tasks WHERE id = {p}", (task_id,))
+                row = cursor.fetchone()
+
             conn.commit()
 
-            # Fetch the claimed task
-            cursor.execute(f"SELECT * FROM tasks WHERE id = {p}", (task_id,))
-            row = cursor.fetchone()
             if not row:
                 return None
 
@@ -750,7 +899,7 @@ class MultiTenantOrchestrator:
             conditions.append(f"status = {p}")
             params.append(status)
         if task_type:
-            conditions.append(f"type = {p}")
+            conditions.append(f"task_type = {p}")
             params.append(task_type)
 
         where_clause = ' AND '.join(conditions) if conditions else '1=1'
@@ -771,16 +920,16 @@ class MultiTenantOrchestrator:
             return Task(
                 id=row['id'],
                 repo_id=row['repo_id'],
-                type=row['type'],
+                type=row['task_type'],
                 priority=row['priority'],
-                payload=json.loads(row['payload']) if row['payload'] else {},
+                payload=parse_json_field(row['payload']) or {},
                 status=row['status'],
                 assigned_to=row['assigned_to'],
                 created_by=row['created_by'],
                 created_at=row['created_at'],
                 claimed_at=row['claimed_at'],
                 completed_at=row['completed_at'],
-                result=json.loads(row['result']) if row['result'] else None,
+                result=parse_json_field(row['result']),
                 error=row['error']
             )
         else:
@@ -789,14 +938,14 @@ class MultiTenantOrchestrator:
                 repo_id=row[1],
                 type=row[2],
                 priority=row[3],
-                payload=json.loads(row[4]) if row[4] else {},
+                payload=parse_json_field(row[4]) or {},
                 status=row[5],
                 assigned_to=row[6],
                 created_by=row[7],
                 created_at=row[8],
                 claimed_at=row[9],
                 completed_at=row[10],
-                result=json.loads(row[11]) if row[11] else None,
+                result=parse_json_field(row[11]),
                 error=row[12]
             )
 
@@ -955,7 +1104,7 @@ class MultiTenantOrchestrator:
                 approval_type=row['approval_type'],
                 title=row['title'],
                 description=row['description'],
-                context=json.loads(row['context']) if row['context'] else {},
+                context=parse_json_field(row['context']) or {},
                 submitted_by=row['submitted_by'],
                 status=row['status'],
                 reviewer_notes=row['reviewer_notes'],
@@ -970,7 +1119,7 @@ class MultiTenantOrchestrator:
                 approval_type=row[2],
                 title=row[3],
                 description=row[4],
-                context=json.loads(row[5]) if row[5] else {},
+                context=parse_json_field(row[5]) or {},
                 submitted_by=row[6],
                 status=row[7],
                 reviewer_notes=row[8],
@@ -989,35 +1138,71 @@ class MultiTenantOrchestrator:
         current_task_id: Optional[str] = None
     ) -> None:
         """Update agent status."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.utcnow()
 
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
             p = self.db.placeholder
 
-            # Upsert
-            cursor.execute(f"""
-                INSERT INTO agent_status (id, agent_id, repo_id, status, current_task_id, last_heartbeat, tasks_completed, tokens_used)
-                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, 0, 0)
-                ON CONFLICT(agent_id, repo_id) DO UPDATE SET
-                    status = {p}, current_task_id = {p}, last_heartbeat = {p}
-            """, (
-                str(uuid.uuid4()), agent_id, repo_id, status, current_task_id, now,
-                status, current_task_id, now
-            ))
+            if self.db.db_type == 'postgresql':
+                # Map status values to PostgreSQL allowed values
+                # PostgreSQL constraint: idle, running, error, stopped
+                status_map = {
+                    'online': 'running',
+                    'offline': 'stopped',
+                    'idle': 'idle',
+                    'rate_limited': 'idle',
+                    'budget_exceeded': 'stopped',
+                    'waiting': 'idle',
+                    'disabled': 'stopped',
+                    'in_progress': 'running',
+                    'error': 'error'
+                }
+                status = status_map.get(status, 'idle')
+
+                # PostgreSQL schema uses agent_type instead of agent_id
+                # Check if record exists first
+                cursor.execute(f"""
+                    SELECT id FROM agent_status WHERE agent_type = {p}
+                """, (agent_id,))
+                existing = cursor.fetchone()
+
+                if existing:
+                    cursor.execute(f"""
+                        UPDATE agent_status
+                        SET status = {p}, current_task_id = {p}, last_heartbeat = {p}
+                        WHERE agent_type = {p}
+                    """, (status, current_task_id, now, agent_id))
+                else:
+                    cursor.execute(f"""
+                        INSERT INTO agent_status (id, agent_type, status, current_task_id, last_heartbeat, metadata)
+                        VALUES ({p}, {p}, {p}, {p}, {p}, {p})
+                    """, (str(uuid.uuid4()), agent_id, status, current_task_id, now, '{}'))
+            else:
+                # SQLite schema
+                cursor.execute(f"""
+                    INSERT OR REPLACE INTO agent_status
+                    (agent_id, status, current_task_id, last_heartbeat, tasks_completed, tokens_used)
+                    VALUES ({p}, {p}, {p}, {p},
+                        COALESCE((SELECT tasks_completed FROM agent_status WHERE agent_id = {p}), 0),
+                        COALESCE((SELECT tokens_used FROM agent_status WHERE agent_id = {p}), 0))
+                """, (agent_id, status, current_task_id, now.isoformat(), agent_id, agent_id))
             conn.commit()
 
     def get_agent_status(self, agent_id: str, repo_id: Optional[str] = None) -> Optional[Dict]:
         """Get agent status."""
+        # Use agent_type for PostgreSQL, agent_id for SQLite
+        col = 'agent_type' if self.db.db_type == 'postgresql' else 'agent_id'
+
         if repo_id:
             row = self.db.execute_one(f"""
                 SELECT * FROM agent_status
-                WHERE agent_id = {self.db.placeholder} AND repo_id = {self.db.placeholder}
+                WHERE {col} = {self.db.placeholder} AND repo_id = {self.db.placeholder}
             """, (agent_id, repo_id))
         else:
             row = self.db.execute_one(f"""
                 SELECT * FROM agent_status
-                WHERE agent_id = {self.db.placeholder}
+                WHERE {col} = {self.db.placeholder}
                 ORDER BY last_heartbeat DESC
                 LIMIT 1
             """, (agent_id,))
@@ -1040,6 +1225,10 @@ class MultiTenantOrchestrator:
 
     def increment_completed(self, agent_id: str, repo_id: Optional[str] = None) -> None:
         """Increment tasks completed counter for an agent."""
+        # PostgreSQL schema doesn't have tasks_completed column
+        if self.db.db_type == 'postgresql':
+            return
+
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
             p = self.db.placeholder
@@ -1119,24 +1308,94 @@ class MultiTenantOrchestrator:
         return False
 
 
+    # ==================== Compatibility Methods for agent_runner ====================
+
+    def get_messages(self, agent_id: str, unread_only: bool = True) -> List[Any]:
+        """Get messages for an agent (stub for compatibility)."""
+        # Inter-agent messaging not implemented in PostgreSQL orchestrator
+        return []
+
+    def mark_read(self, message_id: str, agent_id: str) -> None:
+        """Mark a message as read (stub for compatibility)."""
+        # Inter-agent messaging not implemented in PostgreSQL orchestrator
+        pass
+
+    def record_token_usage(
+        self,
+        agent_id: str,
+        session_id: str,
+        input_tokens: int,
+        output_tokens: int,
+        total_tokens: int,
+        cost_usd: float = 0.0
+    ) -> None:
+        """Record token usage for an agent session."""
+        now = datetime.utcnow().isoformat()
+
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            p = self.db.placeholder
+
+            if self.db.db_type == 'postgresql':
+                # Insert into token_usage table for PostgreSQL
+                cursor.execute(f"""
+                    INSERT INTO token_usage
+                    (id, agent_id, session_id, input_tokens, output_tokens, total_tokens, recorded_at)
+                    VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p})
+                """, (str(uuid.uuid4()), agent_id, session_id, input_tokens, output_tokens, total_tokens, now))
+            else:
+                # Update tokens_used in agent_status for SQLite
+                cursor.execute(f"""
+                    UPDATE agent_status
+                    SET tokens_used = tokens_used + {p}
+                    WHERE agent_id = {p}
+                """, (total_tokens, agent_id))
+            conn.commit()
+
+
 # ==================== Singleton Access ====================
 
 _orchestrator_instance: Optional[MultiTenantOrchestrator] = None
+_orchestrator_lock = threading.Lock()
 
 
-def get_orchestrator(config: Dict[str, Any] = None) -> MultiTenantOrchestrator:
-    """Get or create the orchestrator singleton."""
+def get_orchestrator(config: Dict[str, Any] = None, db_path: str = None, redis_url: str = None) -> MultiTenantOrchestrator:
+    """Get or create the orchestrator singleton (thread-safe)."""
     global _orchestrator_instance
 
+    # Double-checked locking pattern for thread safety
     if _orchestrator_instance is None:
-        if config is None:
-            # Default config
-            config = {
-                'database': {
-                    'type': 'sqlite',
-                    'path': '/auto-dev/data/orchestrator.db'
-                }
-            }
-        _orchestrator_instance = MultiTenantOrchestrator(config)
+        with _orchestrator_lock:
+            # Check again inside the lock
+            if _orchestrator_instance is None:
+                if config is None:
+                    # Auto-detect database from environment
+                    db_host = os.environ.get('DB_HOST')
+                    if db_host:
+                        # PostgreSQL from environment
+                        config = {
+                            'database': {
+                                'type': 'postgresql',
+                                'host': db_host,
+                                'name': os.environ.get('DB_NAME', 'autodev'),
+                                'user': os.environ.get('DB_USER', 'autodev'),
+                                'password': os.environ.get('DB_PASSWORD', '')
+                            },
+                            'redis_url': redis_url or os.environ.get('REDIS_URL')
+                        }
+                    else:
+                        # Fallback to SQLite
+                        config = {
+                            'database': {
+                                'type': 'sqlite',
+                                'path': db_path or '/auto-dev/data/orchestrator.db'
+                            },
+                            'redis_url': redis_url or os.environ.get('REDIS_URL')
+                        }
+                _orchestrator_instance = MultiTenantOrchestrator(config)
 
     return _orchestrator_instance
+
+
+# Compatibility alias for agent_runner imports
+Orchestrator = MultiTenantOrchestrator

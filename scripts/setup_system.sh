@@ -27,7 +27,7 @@ if [ "$USER" != "ubuntu" ]; then
 fi
 
 # Wait for user_data to complete
-while [ ! -f /autonomous-claude/.user_data_complete ]; do
+while [ ! -f /auto-dev/.user_data_complete ]; do
     log_warn "Waiting for user_data script to complete..."
     sleep 5
 done
@@ -53,8 +53,8 @@ log_info "Installing Python 3.12..."
 sudo apt-get install -y python3 python3-venv python3-pip
 
 # Create virtual environment for the project
-python3 -m venv /autonomous-claude/venv
-source /autonomous-claude/venv/bin/activate
+python3 -m venv /auto-dev/venv
+source /auto-dev/venv/bin/activate
 
 # Upgrade pip
 pip install --upgrade pip
@@ -121,7 +121,7 @@ sudo npx playwright install-deps chromium
 # ========================================
 log_info "Installing Python dependencies..."
 
-source /autonomous-claude/venv/bin/activate
+source /auto-dev/venv/bin/activate
 
 pip install \
     fastapi[standard] \
@@ -148,7 +148,7 @@ sudo docker run -d \
     --name qdrant \
     --restart unless-stopped \
     -p 6333:6333 \
-    -v /autonomous-claude/data/qdrant:/qdrant/storage \
+    -v /auto-dev/data/qdrant:/qdrant/storage \
     qdrant/qdrant:latest
 
 log_info "Qdrant started on port 6333"
@@ -185,7 +185,7 @@ fi
 log_info "Creating systemd service files..."
 
 # Watcher service
-sudo tee /etc/systemd/system/autonomous-claude-watcher.service > /dev/null << 'EOF'
+sudo tee /etc/systemd/system/auto-dev-watcher.service > /dev/null << 'EOF'
 [Unit]
 Description=Autonomous Claude Watcher Service
 After=network.target docker.service
@@ -195,9 +195,9 @@ Requires=docker.service
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/autonomous-claude
-Environment="PATH=/autonomous-claude/venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/autonomous-claude/venv/bin/python /autonomous-claude/watcher/supervisor.py
+WorkingDirectory=/auto-dev
+Environment="PATH=/auto-dev/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/auto-dev/venv/bin/python -m watcher.agent_runner --all-agents
 Restart=always
 RestartSec=10
 
@@ -206,7 +206,7 @@ WantedBy=multi-user.target
 EOF
 
 # Dashboard service
-sudo tee /etc/systemd/system/autonomous-claude-dashboard.service > /dev/null << 'EOF'
+sudo tee /etc/systemd/system/auto-dev-dashboard.service > /dev/null << 'EOF'
 [Unit]
 Description=Autonomous Claude Dashboard Service
 After=network.target
@@ -215,9 +215,9 @@ After=network.target
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/autonomous-claude/dashboard
-Environment="PATH=/autonomous-claude/venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/autonomous-claude/venv/bin/uvicorn server:app --host 0.0.0.0 --port 8080
+WorkingDirectory=/auto-dev/dashboard
+Environment="PATH=/auto-dev/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/auto-dev/venv/bin/uvicorn server:app --host 0.0.0.0 --port 8080
 Restart=always
 RestartSec=10
 
@@ -232,7 +232,7 @@ sudo systemctl daemon-reload
 # ========================================
 log_info "Creating environment file template..."
 
-cat > /autonomous-claude/config/.env.template << 'EOF'
+cat > /auto-dev/config/.env.template << 'EOF'
 # Claude Code Authentication
 # Option 1: Use subscription (recommended - cheaper for continuous use)
 #   Run: claude auth login
@@ -285,6 +285,6 @@ echo "Next steps:"
 echo "1. Log out and back in (for docker group access)"
 echo "2. Copy .env.template to .env and add your ANTHROPIC_API_KEY"
 echo "3. Deploy the watcher and dashboard code"
-echo "4. Start services with: sudo systemctl start autonomous-claude-watcher"
+echo "4. Start services with: sudo systemctl start autodev-watcher"
 echo ""
 log_info "Setup complete!"

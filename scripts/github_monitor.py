@@ -367,8 +367,9 @@ def main():
             for cmd in commands:
                 print(cmd)
                 if not args.dry_run:
-                    # Execute the command
-                    subprocess.run(cmd, shell=True)
+                    # Execute the command using shlex for safe parsing
+                    import shlex
+                    subprocess.run(shlex.split(cmd))
         else:
             print("\nNo new issues to process.")
 

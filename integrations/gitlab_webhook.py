@@ -201,11 +201,14 @@ class WebhookHandler:
     ) -> bool:
         """Verify GitLab webhook signature."""
         if not secret:
-            logger.warning("No webhook secret configured, skipping verification")
-            return True
+            logger.warning("No webhook secret configured - rejecting webhook for security")
+            return False
 
-        expected = signature
-        return hmac.compare_digest(expected, secret)
+        # GitLab sends the secret token directly in X-Gitlab-Token header
+        # Use timing-safe comparison to prevent timing attacks
+        if not signature:
+            return False
+        return hmac.compare_digest(signature, secret)
 
     def get_webhook_secret(self, repo_id: str) -> Optional[str]:
         """Get webhook secret for a repo from SSM or environment."""
@@ -518,9 +521,9 @@ class WebhookHandler:
         project = body.get('project', {})
         repo_id = project.get('path_with_namespace', 'unknown')
 
-        # Verify signature
+        # Verify signature using timing-safe comparison
         secret = self.get_webhook_secret(repo_id)
-        if secret and x_gitlab_token != secret:
+        if secret and (not x_gitlab_token or not hmac.compare_digest(x_gitlab_token, secret)):
             logger.warning(f"Invalid webhook token for {repo_id}")
             raise HTTPException(status_code=401, detail="Invalid webhook token")
 
@@ -593,5 +596,12 @@ def create_webhook_routes(
 
 # Standalone webhook verification for testing
 def verify_gitlab_signature(payload: bytes, token: str, secret: str) -> bool:
-    """Verify GitLab webhook signature."""
+    """Verify GitLab webhook token.
+
+    GitLab uses simple token-based verification where the secret is sent
+    directly in the X-Gitlab-Token header. The payload is not used for
+    verification (unlike GitHub's HMAC-based approach).
+    """
+    if not token or not secret:
+        return False
     return hmac.compare_digest(token, secret)

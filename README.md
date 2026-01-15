@@ -176,10 +176,13 @@ aws ssm put-parameter \
 # Start dashboard
 python dashboard/server.py
 
-# Start agents (in separate terminals or use supervisor)
-python watcher/supervisor.py --agent pm
-python watcher/supervisor.py --agent architect
-python watcher/supervisor.py --agent builder
+# Start agents via Docker (recommended)
+docker-compose up -d pm architect builder reviewer tester security devops bug-finder
+
+# Or start individually
+python -m watcher.agent_runner --agent pm
+python -m watcher.agent_runner --agent architect
+python -m watcher.agent_runner --agent builder
 # ... etc for other agents
 ```
 
@@ -324,7 +327,7 @@ Same flow but approvals auto-pass if thresholds are met:
 │   ├── gitlab_client.py   # GitLab API client
 │   └── gitlab_webhook.py  # Webhook handler
 ├── watcher/
-│   ├── supervisor.py      # Agent process manager
+│   ├── agent_runner.py    # Agent process manager
 │   ├── orchestrator_pg.py # Task queue (PostgreSQL)
 │   ├── reflection.py      # Learning framework
 │   └── memory.py          # Memory systems
@@ -430,11 +433,28 @@ psql -d autodev -c "SELECT 1"
 | Tester | Bug Issue | No |
 | DevOps | - | Yes (verified complete) |
 
+## Security Notes
+
+### Webhook Authentication (Required)
+- GitLab webhooks **require** a secret token for authentication
+- Webhooks without secrets are rejected
+- Get webhook setup info: `GET /api/repos/{id}/webhook`
+- Regenerate secret: `GET /api/repos/{id}/webhook?regenerate=true`
+- Secret is only shown in full when first generated
+
+### Credentials
+- GitLab tokens stored in AWS SSM: `/auto-dev/{repo-slug}/gitlab-token`
+- Never commit secrets to repositories
+
+### Pinned Dependencies
+The Dockerfile pins exact versions for reproducibility:
+- `@openai/codex@0.80.0`
+- `@anthropic-ai/claude-code@2.1.7`
+
 ## License
 
 MIT
 
 ## Acknowledgments
 
-- Forked from [auto-claude](https://github.com/...)
-- Uses Codex CLI for AI operations
+- Uses Codex CLI (primary) and Claude CLI (fallback) for AI operations

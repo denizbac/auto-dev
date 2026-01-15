@@ -39,7 +39,7 @@ cat > /autonomous-claude/config/agents/<name>.md << 'EOF'
 <prompt content from proposal payload>
 EOF
 
-# Update supervisor.py choices (if needed)
+# Update agent_runner.py choices (if needed)
 # Update start_agents.sh AGENTS array
 # Notify the swarm
 claude-swarm discuss "system" "🎉 New agent '<name>' has been created and will start next restart"

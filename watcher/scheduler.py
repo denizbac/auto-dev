@@ -7,7 +7,7 @@ Creates tasks in the orchestrator queue when schedules trigger.
 Usage:
     python -m watcher.scheduler
 
-    Or integrated with supervisor:
+    Or integrated with agent runner:
     scheduler = Scheduler(orchestrator, config)
     scheduler.start()
 """
@@ -69,12 +69,14 @@ class CronExpression:
 
     def matches(self, dt: datetime) -> bool:
         """Check if a datetime matches this cron expression."""
+        # Convert Python weekday (0=Monday) to cron weekday (0=Sunday)
+        cron_weekday = (dt.weekday() + 1) % 7
         return (
             dt.minute in self.minute and
             dt.hour in self.hour and
             dt.day in self.day and
             dt.month in self.month and
-            dt.weekday() in self.weekday  # Python: 0 = Monday, adjust if needed
+            cron_weekday in self.weekday
         )
 
 
@@ -213,13 +215,13 @@ class Scheduler:
 
         while self.running:
             try:
-                now = datetime.now()
+                now = datetime.utcnow()
                 self._check_jobs(now)
             except Exception as e:
                 logger.error(f"Scheduler error: {e}")
 
             # Sleep until next minute
-            time.sleep(60 - datetime.now().second)
+            time.sleep(60 - datetime.utcnow().second)
 
     def _check_jobs(self, now: datetime):
         """Check all jobs and run those that match."""
@@ -310,7 +312,7 @@ class Scheduler:
         """Manually trigger a job to run immediately."""
         for job in self.jobs:
             if job.name == job_name:
-                self._run_job(job, datetime.now())
+                self._run_job(job, datetime.utcnow())
                 return True
         return False
 

@@ -1,8 +1,8 @@
-# Autonomous Claude Swarm - Architecture
+# Auto-Dev - Architecture
 
 ## Overview
 
-This is a self-organizing AI agent swarm designed to autonomously generate income through digital products, services, and content. The system runs on AWS EC2 with 10 specialized agents that collaborate, debate, and evolve together.
+Auto-Dev is an autonomous software development system that uses 8 specialized AI agents to develop software on GitLab repositories. The system runs on AWS EC2 with Docker containers for each agent, using PostgreSQL for coordination and Qdrant for long-term memory.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
@@ -10,28 +10,28 @@ This is a self-organizing AI agent swarm designed to autonomously generate incom
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                 │
 │  ┌─────────────────────────────────────────────────────────────────────────┐   │
-│  │                         AGENT LAYER (10 Agents)                          │   │
+│  │                         AGENT LAYER (8 Agents)                           │   │
 │  │                                                                          │   │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐      │   │
-│  │  │  Hunter  │ │  Critic  │ │    PM    │ │ Builder  │ │ Reviewer │      │   │
-│  │  │(Sonnet)  │ │ (Opus)   │ │(Sonnet)  │ │ (Opus)   │ │ (Opus)   │      │   │
-│  │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘      │   │
-│  │       │            │            │            │            │             │   │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐      │   │
-│  │  │  Tester  │ │Publisher │ │   Meta   │ │ Liaison  │ │ Support  │      │   │
-│  │  │ (Opus)   │ │(Sonnet)  │ │(Sonnet)  │ │(Sonnet)  │ │(Sonnet)  │      │   │
-│  │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘      │   │
-│  │       │            │            │            │            │             │   │
-│  └───────┼────────────┼────────────┼────────────┼────────────┼─────────────┘   │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐                    │   │
+│  │  │    PM    │ │ Architect│ │ Builder  │ │ Reviewer │                    │   │
+│  │  │ (Codex)  │ │ (Codex)  │ │ (Codex)  │ │ (Codex)  │                    │   │
+│  │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘                    │   │
+│  │       │            │            │            │                           │   │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐                    │   │
+│  │  │  Tester  │ │ Security │ │  DevOps  │ │Bug Finder│                    │   │
+│  │  │ (Codex)  │ │ (Codex)  │ │ (Codex)  │ │ (Codex)  │                    │   │
+│  │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘                    │   │
+│  │       │            │            │            │                           │   │
+│  └───────┼────────────┼────────────┼────────────┼───────────────────────────┘   │
 │          │            │            │            │            │                  │
 │          ▼            ▼            ▼            ▼            ▼                  │
 │  ┌─────────────────────────────────────────────────────────────────────────┐   │
-│  │                         SUPERVISOR LAYER                                 │   │
+│  │                        AGENT RUNNER LAYER                               │   │
 │  │                                                                          │   │
 │  │  ┌────────────────────────────────────────────────────────────────┐     │   │
-│  │  │                     supervisor.py                               │     │   │
+│  │  │                     agent_runner.py                             │     │   │
 │  │  │  • Spawns LLM CLI workers (Claude/Codex) for each agent        │     │   │
-│  │  │  • Manages tmux sessions (claude-{agent})                      │     │   │
+│  │  │  • Runs as Docker containers (one per agent type)              │     │   │
 │  │  │  • Health checks & auto-restart on crashes                     │     │   │
 │  │  │  • Token budget enforcement                                     │     │   │
 │  │  │  • Rate limit detection & provider fallback                    │     │   │
@@ -114,123 +114,109 @@ This is a self-organizing AI agent swarm designed to autonomously generate incom
 
 ## Agent Roles & Models
 
-| Agent | Model | Role | Task Types |
-|-------|-------|------|------------|
-| **Hunter** | Sonnet | Scans platforms for opportunities | `scan_platform`, `research` |
-| **Critic** | Opus | Gatekeeper - evaluates ideas | `evaluate_idea` |
-| **PM** | Sonnet | Creates detailed product specs | `write_spec` |
-| **Builder** | Opus | Creates products and fixes issues | `build_product`, `fix_product` |
-| **Reviewer** | Opus | Code review for security/quality | `code_review` |
-| **Tester** | Opus | 3-phase QA validation | `test_product` |
-| **Publisher** | Sonnet | Deploys and markets products | `deploy`, `publish`, `market` |
-| **Meta** | Sonnet | Swarm architect - implements proposals | `implement_proposal` |
-| **Liaison** | Sonnet | Human interface | `respond_to_human`, `directive` |
-| **Support** | Sonnet | Monitors GitHub/npm feedback | `monitor_github`, `triage_issue` |
+| Agent | LLM Provider | Role | Task Types |
+|-------|-------------|------|------------|
+| **PM** | Codex | Product Manager - backlog management | `analyze_repo`, `create_epic`, `create_user_story`, `prioritize_backlog`, `triage_issue` |
+| **Architect** | Codex | Solution Designer | `evaluate_feasibility`, `write_spec`, `create_implementation_issue` |
+| **Builder** | Codex | Implementer | `implement_feature`, `implement_fix`, `implement_refactor`, `address_review_feedback` |
+| **Reviewer** | Codex | Code Quality Gate | `review_mr` |
+| **Tester** | Codex | QA Engineer | `write_tests`, `run_tests`, `validate_feature`, `analyze_coverage` |
+| **Security** | Codex | Security Analyst | `security_scan`, `dependency_audit`, `compliance_check` |
+| **DevOps** | Codex | Operations | `manage_pipeline`, `deploy`, `rollback`, `fix_build` |
+| **Bug Finder** | Codex | Proactive Bug Detection | `static_analysis`, `bug_hunt` |
 
-**Model Selection Rationale:**
-- **Opus** for agents requiring deep reasoning: Critic (strategic judgment), Builder (complex coding), Reviewer (security), Tester (thorough validation)
-- **Sonnet** for agents with more structured/execution-focused work
+**LLM Provider:**
+- **Codex** (gpt-4.1) is the primary provider
+- **Claude** is available as fallback when rate limited
+- Auto-switches on rate limits via `AUTODEV_LLM_PROVIDER` environment variable
 
 ---
 
-## Product Workflow
+## Development Workflow
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                              PRODUCT PIPELINE                                            │
+│                              DEVELOPMENT PIPELINE                                        │
 └─────────────────────────────────────────────────────────────────────────────────────────┘
 
-  Hunter → Critic → PM → Human Approval → Builder → Reviewer → Tester → Human Approval → Publisher
+PM → Architect → [Human Approval] → Builder → Reviewer/Tester/Security (parallel) → [Human Approval] → DevOps
 ```
 
-### Quality Gates
+### Approval Gates
 
-1. **Critic Gate**: Blocks bad ideas, bounty work, external contributions
+1. **Spec Approval**: Human reviews architect's spec before implementation begins
 2. **Reviewer Gate**: Code review for security, quality, maintainability
-3. **Tester Gate**: Build verification → Functional testing → Customer experience
-4. **Human Gate**: Required before building and before publishing
+3. **Tester Gate**: Tests must pass with required coverage
+4. **Security Gate**: No critical vulnerabilities
+5. **Merge Approval**: Human approves merge request before deployment
+
+### Autonomy Modes
+
+- **Guided** (default): Human approval required at spec and merge points
+- **Full Autonomy**: Auto-approve if thresholds met (architect_confidence>=8, reviewer_score>=9, coverage>=80%)
 
 ---
 
 ## Directory Structure
 
 ```
-/autonomous-claude/
-├── bin/                          # CLI tools
-│   ├── claude-swarm              # Swarm communication
-│   ├── claude-tasks              # Task management
-│   └── gumroad-publish           # Publish to Gumroad
-│
+/auto-dev/
 ├── config/
 │   ├── agents/                   # Agent prompts
-│   │   ├── hunter.md
-│   │   ├── critic.md
 │   │   ├── pm.md
+│   │   ├── architect.md
 │   │   ├── builder.md
 │   │   ├── reviewer.md
 │   │   ├── tester.md
-│   │   ├── publisher.md
-│   │   ├── meta.md
-│   │   ├── liaison.md
-│   │   ├── support.md
-│   │   ├── SWARM_BEHAVIORS.md    # Shared swarm behaviors
-│   │   ├── QUALITY_GATE.md       # Quality gate rules
-│   │   └── TEST_FIX_LOOP.md      # Test/fix loop rules
-│   ├── master_prompt.md          # Master agent instructions
-│   ├── settings.yaml             # Main configuration
-│   └── secrets/                  # Local secrets (not in git)
+│   │   ├── security.md
+│   │   ├── devops.md
+│   │   └── bugfinder.md
+│   └── settings.yaml             # Main configuration
 │
 ├── dashboard/
 │   ├── server.py                 # FastAPI dashboard
+│   ├── repos.py                  # Multi-repo management API
 │   ├── slack_bot.py              # Slack bot integration
-│   └── slack_notifications.py    # Slack notification helpers
+│   └── frontend/                 # React frontend
 │
 ├── data/
 │   ├── memory/
 │   │   └── short_term.db         # SQLite short-term memory
-│   ├── orchestrator.db           # Orchestrator database
-│   ├── projects/                 # Agent workspace for products
-│   ├── specs/                    # Product specifications (PM)
-│   ├── screenshots/              # Browser screenshots
-│   └── income/                   # Income records
+│   └── orchestrator.db           # SQLite fallback (not used in production)
+│
+├── integrations/
+│   ├── gitlab_client.py          # GitLab API wrapper
+│   └── gitlab_webhook.py         # Webhook event handler
 │
 ├── logs/                         # Agent logs
-│   ├── hunter.log
+│   ├── pm.log
 │   ├── builder.log
 │   └── ...
-│
-├── memory/
-│   └── long_term/                # Markdown learning files
 │
 ├── scripts/
 │   ├── start_agents.sh           # Agent management
 │   ├── deploy.sh                 # Deploy to EC2
-│   ├── github_monitor.py         # GitHub issue monitor
 │   └── ...
-│
-├── skills/                       # Reusable skill patterns
-│   ├── freelance_upwork.md
-│   ├── micro_saas.md
-│   └── gumroad_publish.md
-│
-├── templates/
-│   └── product_spec.md           # Spec template for PM
 │
 ├── terraform/                    # AWS infrastructure
 │   ├── main.tf
 │   ├── variables.tf
 │   └── outputs.tf
 │
-├── watcher/                      # Core supervisor system
+├── watcher/                      # Core agent system
 │   ├── __init__.py
-│   ├── supervisor.py             # Agent process manager
-│   ├── orchestrator.py           # Multi-agent coordination
-│   ├── memory.py                 # Memory management
-│   └── gumroad_publisher.py      # Gumroad integration
+│   ├── agent_runner.py           # Agent process manager
+│   ├── orchestrator_pg.py        # PostgreSQL orchestrator (primary)
+│   ├── orchestrator.py           # SQLite orchestrator (fallback)
+│   ├── scheduler.py              # Cron-based job scheduling
+│   ├── reflection.py             # Agent learning system
+│   └── memory.py                 # Memory management
 │
-├── downloads/                    # Built products ready for sale
+├── docker-compose.yaml           # Docker services
+├── Dockerfile                    # Agent container image
 ├── README.md
-├── OPERATIONS.md
+├── ARCHITECTURE.md
+├── CLAUDE.md
 └── requirements.txt
 ```
 
@@ -242,14 +228,14 @@ This is a self-organizing AI agent swarm designed to autonomously generate incom
 
 ```
                     ┌─────────────────────────────────────────────────┐
-                    │              ORCHESTRATOR (SQLite)               │
+                    │              ORCHESTRATOR (PostgreSQL)           │
                     │                                                  │
                     │  tasks table:                                    │
                     │  ┌─────────────────────────────────────────────┐│
-                    │  │ id | type | priority | status | assigned_to ││
+                    │  │ id | task_type | priority | status | agent  ││
                     │  ├─────────────────────────────────────────────┤│
-                    │  │ ... | evaluate_idea | 7 | pending | NULL    ││
-                    │  │ ... | build_product | 8 | claimed | builder ││
+                    │  │ ... | write_spec | 7 | pending | NULL       ││
+                    │  │ ... | implement  | 8 | claimed | builder    ││
                     │  └─────────────────────────────────────────────┘│
                     └─────────────────────────────────────────────────┘
                                            │
@@ -257,13 +243,13 @@ This is a self-organizing AI agent swarm designed to autonomously generate incom
                 │                          │                          │
                 ▼                          ▼                          ▼
         ┌──────────────┐          ┌──────────────┐          ┌──────────────┐
-        │    Hunter    │          │    Builder   │          │   Publisher  │
+        │      PM      │          │    Builder   │          │    DevOps    │
         │              │          │              │          │              │
         │ claim_task() │          │ claim_task() │          │ claim_task() │
         │ task_types:  │          │ task_types:  │          │ task_types:  │
-        │ [scan_*]     │          │ [build_*]    │          │ [deploy,     │
-        │              │          │              │          │  publish,    │
-        │              │          │              │          │  market]     │
+        │ [analyze_*,  │          │ [implement_*,│          │ [deploy,     │
+        │  create_*,   │          │  address_*]  │          │  rollback,   │
+        │  triage_*]   │          │              │          │  fix_build]  │
         └──────────────┘          └──────────────┘          └──────────────┘
 ```
 
@@ -291,81 +277,78 @@ Agent A                  Orchestrator                  Agent B
    │                          │                          │
 ```
 
-### Proposal & Voting Flow
+### Approval Flow
 
 ```
-Any Agent                  Orchestrator                 All Agents
+Agent                      Orchestrator                  Human
     │                          │                          │
-    │  create_proposal()       │                          │
+    │  create_approval()       │                          │
     │ ─────────────────────▶   │                          │
-    │  ("New Researcher agent")│                          │
+    │  (spec or merge request) │                          │
     │                          │                          │
-    │                          │  get_open_proposals()    │
-    │                          │ ◀────────────────────────│
+    │                          │  Dashboard shows pending │
+    │                          │ ─────────────────────────▶│
     │                          │                          │
+    │                          │  Human reviews           │
+    │                          │ ◀─────────────────────────│
+    │                          │  approve/reject          │
     │                          │                          │
-    │                          │  vote_proposal()         │
-    │                          │ ◀────────────────────────│
+    │  get_approval_status()   │                          │
+    │ ◀─────────────────────   │                          │
     │                          │                          │
-    │                          │  check_consensus()       │
-    │                          │  (quorum=3, threshold=60%)
-    │                          │                          │
-    │                          │  if APPROVED:            │
-    │                          │  notify agents           │
-    │                          │ ─────────────────────▶   │
-    │                          │                          │
-    │                          │  Meta implements         │
-    │                          │ ◀────────────────────────│
+    │  if APPROVED:            │                          │
+    │  continue to next stage  │                          │
 ```
 
 ---
 
 ## Component Details
 
-### Supervisor (`watcher/supervisor.py`)
+### Agent Runner (`watcher/agent_runner.py`)
 
-Each agent runs as a separate process managed by the supervisor:
+Each agent runs in its own Docker container, managed by the AgentRunner:
 
 ```python
-class AutonomousClaudeWatcher:
+class AgentRunner:
     """
     Responsibilities:
     - Spawn LLM CLI worker processes (Claude/Codex)
     - Claim tasks from orchestrator queue
-    - Pass task context to Claude via prompts
+    - Pass task context to LLM via prompts
     - Handle session lifecycle (start, monitor, restart)
     - Enforce token budgets
     - Detect and propagate rate limits
+    - Respond to Redis enable/disable signals
     """
-    
+
     AGENT_TASK_TYPES = {
-        'hunter': ['scan_platform', 'research'],
-        'critic': ['evaluate_idea'],
-        'pm': ['write_spec'],
-        'builder': ['build_product', 'fix_product'],
-        'reviewer': ['code_review'],
-        'tester': ['test_product'],
-        'publisher': ['deploy', 'publish', 'market'],
+        'pm': ['analyze_repo', 'create_epic', 'break_down_epic', ...],
+        'architect': ['evaluate_feasibility', 'write_spec', ...],
+        'builder': ['implement_feature', 'implement_fix', ...],
+        'reviewer': ['review_mr'],
+        'tester': ['write_tests', 'run_tests', ...],
+        'security': ['security_scan', 'dependency_audit', ...],
+        'devops': ['manage_pipeline', 'deploy', ...],
+        'bug_finder': ['static_analysis', 'bug_hunt'],
         # ...
     }
 ```
 
-### Orchestrator (`watcher/orchestrator.py`)
+### Orchestrator (`watcher/orchestrator_pg.py`)
 
-Central coordination database with these tables:
+Central coordination database (PostgreSQL) with these tables:
 
 | Table | Purpose |
 |-------|---------|
+| `repos` | Multi-repo management (GitLab projects) |
 | `tasks` | Priority queue with claiming, status tracking |
-| `file_locks` | Prevent concurrent file edits |
-| `agent_mail` | Inter-agent messages |
-| `agent_status` | Heartbeat, current task, tokens used |
-| `discussions` | Threaded debate forum |
-| `proposals` | Swarm change proposals |
-| `votes` | Track voting (prevent duplicates) |
-| `approval_queue` | Human approval before publishing |
-| `token_usage` | Token tracking per agent |
-| `processed_issues` | GitHub/npm issues (Support agent) |
+| `approvals` | Human approval queue for specs and merges |
+| `agent_status` | Heartbeat, current task, status |
+| `reflections` | Agent learning and improvements |
+| `learnings` | Accumulated knowledge base |
+| `gitlab_objects` | Cached GitLab data |
+
+The orchestrator auto-detects PostgreSQL from `DB_HOST` environment variable and falls back to SQLite if unavailable.
 
 ### Memory Systems
 
@@ -383,33 +366,27 @@ Central coordination database with these tables:
 
 ---
 
-## Swarm Intelligence Features
+## Agent Coordination Features
 
-### Emergent Behaviors
+### Reflection & Learning
 
-Agents don't just follow orders - they:
-1. **Discuss** strategies and observations
-2. **Propose** new agents, pivots, rule changes
-3. **Vote** on proposals (60% threshold, 3 quorum)
-4. **Debate** before building controversial features
+Agents learn from their work through the reflection system:
+1. **Record** outcomes after completing tasks
+2. **Extract** learnings from successful/failed approaches
+3. **Retrieve** relevant context before new tasks
+4. **Improve** prompts based on accumulated insights
 
 ### CLI Tools
 
 ```bash
-# Discussion
-claude-swarm discuss "hunter" "Market insight: templates are dead"
-claude-swarm discuss --recent
+# Agent management
+./scripts/start_agents.sh status    # Check agent status
+./scripts/start_agents.sh pm        # Start specific agent
+./scripts/start_agents.sh stop      # Stop all agents
 
-# Proposals
-claude-swarm propose new_agent "Researcher" "We need market validation"
-claude-swarm proposals
-
-# Voting
-claude-swarm vote <proposal_id> for "Agreed - we need this"
-
-# Tasks
-claude-tasks list
-claude-tasks create --type evaluate_idea --priority 7 --payload '{...}'
+# View agent activity
+tmux attach -t claude-pm            # Live view (Ctrl+B, D to detach)
+tail -f logs/pm.log                 # View logs
 ```
 
 ---
@@ -418,31 +395,33 @@ claude-tasks create --type evaluate_idea --priority 7 --payload '{...}'
 
 ```
 AWS Resources:
-├── EC2 Instance (t3.medium)
+├── EC2 Instance (t3.xlarge)
 │   ├── Ubuntu 22.04
-│   ├── 50GB gp3 EBS
+│   ├── 100GB gp3 EBS
 │   └── Security Group (SSH + 8080)
 │
 ├── SSM Parameter Store
-│   └── /autonomous-claude/
-│       ├── gumroad/email
-│       ├── gumroad/password
-│       ├── github/token
-│       ├── npm/token
-│       └── vercel/token
+│   └── /auto-dev/{repo-slug}/
+│       └── gitlab-token
 │
-└── (Optional) Redis for high-performance queue
+├── Docker Services
+│   ├── PostgreSQL (primary database)
+│   ├── Redis (coordination)
+│   ├── Qdrant (vector memory)
+│   └── 8 Agent containers
+│
+└── GitLab Webhooks (external)
 ```
 
 ### Cost Breakdown
 
 | Component | Monthly Cost |
 |-----------|-------------|
-| EC2 t3.medium | ~$30 |
-| EBS 50GB gp3 | ~$4 |
+| EC2 t3.xlarge | ~$120 |
+| EBS 100GB gp3 | ~$8 |
 | Data transfer | ~$5-10 |
-| Claude (Max subscription) | $100 |
-| **Total** | **~$140/month** |
+| Codex Pro | $200 |
+| **Total** | **~$335/month** |
 
 ---
 
@@ -453,20 +432,20 @@ AWS Resources:
 ./scripts/start_agents.sh           # Start all
 ./scripts/start_agents.sh status    # Check status
 ./scripts/start_agents.sh stop      # Stop all
-./scripts/start_agents.sh hunter    # Start one
+./scripts/start_agents.sh pm        # Start one
 ```
 
 ### View Agent Activity
 ```bash
-tmux attach -t claude-hunter        # Live view (Ctrl+B, D to detach)
-tail -f logs/hunter.log             # Tail logs
+tmux attach -t claude-pm            # Live view (Ctrl+B, D to detach)
+tail -f logs/pm.log                 # Tail logs
 ```
 
 ### Deploy Changes
 ```bash
 rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' \
   -e "ssh -i ~/.ssh/<key>.pem" \
-  . ubuntu@<EC2_IP>:/autonomous-claude/
+  . ubuntu@<EC2_IP>:/auto-dev/
 ```
 
 ### Human Approval

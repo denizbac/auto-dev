@@ -1,4 +1,4 @@
-# Autonomous Claude Swarm - Operations Guide
+# Auto-Dev - Operations Guide
 
 This document explains how to manage the autonomous AI swarm running on EC2.
 
@@ -10,18 +10,18 @@ cd terraform && terraform output          # Get EC2 info
 ssh -i ~/.ssh/<key>.pem ubuntu@<EC2_IP>   # SSH in
 
 # === AGENT MANAGEMENT (on EC2) ===
-cd /autonomous-claude
+cd /auto-dev
 ./scripts/start_agents.sh status    # Check all agents
 ./scripts/start_agents.sh           # Start all agents
 ./scripts/start_agents.sh stop      # Stop all agents
-./scripts/start_agents.sh hunter    # Start specific agent
-tmux attach -t claude-hunter        # View live (Ctrl+B, D to detach)
-tail -f logs/hunter.log             # View logs
+./scripts/start_agents.sh pm        # Start specific agent
+tmux attach -t claude-pm        # View live (Ctrl+B, D to detach)
+tail -f logs/pm.log             # View logs
 
 # === AWS CLI ===
 aws ec2 start-instances --instance-ids <ID>   # Start EC2
 aws ec2 stop-instances --instance-ids <ID>    # Stop EC2 (saves $)
-aws ssm get-parameters-by-path --path "/autonomous-claude" --query "Parameters[].Name"
+aws ssm get-parameters-by-path --path "/auto-dev" --query "Parameters[].Name"
 
 # === DASHBOARD ===
 http://<EC2_IP>:8080
@@ -59,7 +59,7 @@ ssh -i ~/.ssh/<your-key>.pem ubuntu@<EC2_IP>
 ### Check Status
 
 ```bash
-cd /autonomous-claude
+cd /auto-dev
 ./scripts/start_agents.sh status
 ```
 
@@ -71,16 +71,14 @@ Output:
 
 AGENT           STATUS     SESSION
 ───────────────────────────────────────────────────────────────
-hunter          RUNNING    claude-hunter
-critic          RUNNING    claude-critic
 pm              RUNNING    claude-pm
+architect       RUNNING    claude-architect
 builder         RUNNING    claude-builder
 reviewer        RUNNING    claude-reviewer
 tester          RUNNING    claude-tester
-publisher       RUNNING    claude-publisher
-meta            RUNNING    claude-meta
-liaison         RUNNING    claude-liaison
-support         RUNNING    claude-support
+security        RUNNING    claude-security
+devops          RUNNING    claude-devops
+bug_finder      RUNNING    claude-bug_finder
 ```
 
 ### Start Agents
@@ -90,9 +88,9 @@ support         RUNNING    claude-support
 ./scripts/start_agents.sh
 
 # Start specific agent
-./scripts/start_agents.sh hunter
+./scripts/start_agents.sh pm
+./scripts/start_agents.sh architect
 ./scripts/start_agents.sh builder
-./scripts/start_agents.sh publisher
 ```
 
 ### Stop Agents
@@ -102,14 +100,14 @@ support         RUNNING    claude-support
 ./scripts/start_agents.sh stop
 
 # Stop specific agent
-./scripts/start_agents.sh stop hunter
+./scripts/start_agents.sh stop pm
 ```
 
 ### Restart Agent
 
 ```bash
-./scripts/start_agents.sh stop hunter
-./scripts/start_agents.sh hunter
+./scripts/start_agents.sh stop pm
+./scripts/start_agents.sh pm
 ```
 
 ---
@@ -122,7 +120,7 @@ Each agent runs in a tmux session. You can watch them work in real-time:
 
 ```bash
 # Attach to agent session
-tmux attach -t claude-hunter
+tmux attach -t claude-pm
 
 # Detach (keep agent running): Ctrl+B, then D
 # Kill session (stops agent): Ctrl+C
@@ -132,14 +130,14 @@ tmux attach -t claude-hunter
 
 ```bash
 # Live tail
-tail -f /autonomous-claude/logs/hunter.log
+tail -f /auto-dev/logs/pm.log
 
 # Last 100 lines
-tail -100 /autonomous-claude/logs/builder.log
+tail -100 /auto-dev/logs/builder.log
 
 # Search logs
-grep "ERROR" /autonomous-claude/logs/*.log
-grep "income" /autonomous-claude/logs/*.log
+grep "ERROR" /auto-dev/logs/*.log
+grep "income" /auto-dev/logs/*.log
 ```
 
 ### List All tmux Sessions
@@ -173,10 +171,10 @@ Open in browser: `http://<EC2_IP>:8080`
 
 ```bash
 # Via systemd
-sudo systemctl restart autonomous-claude-dashboard
+sudo systemctl restart autodev-dashboard
 
 # Or manually
-cd /autonomous-claude/dashboard
+cd /auto-dev/dashboard
 source ../venv/bin/activate
 python server.py
 ```
@@ -188,7 +186,7 @@ python server.py
 ### View Tasks
 
 ```bash
-cd /autonomous-claude
+cd /auto-dev
 source venv/bin/activate
 
 # Using CLI
@@ -210,27 +208,32 @@ source venv/bin/activate
 
 | Type | Handled By | Description |
 |------|-----------|-------------|
-| `scan_platform` | Hunter | Scan for opportunities |
-| `evaluate_idea` | Critic | Evaluate idea viability |
-| `write_spec` | PM | Create product specification |
-| `build_product` | Builder | Build a product |
-| `code_review` | Reviewer | Code review before testing |
-| `test_product` | Tester | Three-phase QA validation |
-| `fix_product` | Builder | Fix issues found in review/testing |
-| `deploy` | Publisher | Deploy to platform |
-| `publish` | Publisher | Human-approved publish |
+| `analyze_repo` | PM | Analyze repository structure |
+| `create_epic` | PM | Create GitLab Epic |
+| `create_user_story` | PM | Create user story issue |
+| `prioritize_backlog` | PM | Prioritize issues |
+| `evaluate_feasibility` | Architect | Evaluate technical feasibility |
+| `write_spec` | Architect | Create implementation specification |
+| `implement_feature` | Builder | Implement new feature |
+| `implement_fix` | Builder | Fix a bug |
+| `review_mr` | Reviewer | Code review merge request |
+| `run_tests` | Tester | Run test suites |
+| `security_scan` | Security | SAST security scanning |
+| `deploy` | DevOps | Deploy to environment |
+| `static_analysis` | Bug Finder | Proactive bug detection |
 
-### Product Workflow
+### Development Workflow
 
 ```
-Hunter → Critic → PM → Human Approval → Builder → Reviewer → Tester → Human Approval → Publisher
+PM → Architect → [Human Approval] → Builder → Reviewer/Tester/Security (parallel) → [Human Approval] → DevOps
 ```
 
 **Key Quality Gates:**
-1. **Critic**: Blocks bounties, external contributions, bad ideas
-2. **Reviewer**: Code review for security, quality, maintainability  
-3. **Tester**: Build verification + Functional testing + Customer experience
-4. **Human Approval**: Required before building and before publishing
+1. **Spec Approval**: Human reviews architect's spec before implementation
+2. **Reviewer**: Code review for security, quality, maintainability
+3. **Tester**: Tests must pass with required coverage
+4. **Security**: No critical vulnerabilities
+5. **Merge Approval**: Human approves before deployment
 
 ---
 
@@ -289,11 +292,11 @@ curl -X POST http://localhost:8080/api/projects/<id>/defer \
 
 ```bash
 # On EC2, check product directory
-ls -la /autonomous-claude/data/projects/
+ls -la /auto-dev/data/projects/
 
 # Review specific product
-cat /autonomous-claude/data/projects/<product-name>/README.md
-cat /autonomous-claude/data/projects/<product-name>/GUMROAD_LISTING.md
+cat /auto-dev/data/projects/<product-name>/README.md
+cat /auto-dev/data/projects/<product-name>/GUMROAD_LISTING.md
 ```
 
 ### Approve/Reject via API
@@ -320,7 +323,7 @@ rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' \
   --exclude 'data' --exclude 'logs' --exclude '*.pyc' \
   -e "ssh -i ~/.ssh/<key>.pem" \
   /Users/denizbac/Dev/auto-claude/ \
-  ubuntu@<EC2_IP>:/autonomous-claude/
+  ubuntu@<EC2_IP>:/auto-dev/
 
 # Option 2: Use deploy script (if configured)
 ./scripts/deploy.sh
@@ -333,7 +336,7 @@ rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' \
 ssh -i ~/.ssh/<key>.pem ubuntu@<EC2_IP>
 
 # Restart agents to pick up changes
-cd /autonomous-claude
+cd /auto-dev
 ./scripts/start_agents.sh stop
 ./scripts/start_agents.sh
 ```
@@ -342,10 +345,10 @@ cd /autonomous-claude
 
 ```bash
 # Just agent prompts
-scp -i ~/.ssh/<key>.pem config/agents/*.md ubuntu@<EC2_IP>:/autonomous-claude/config/agents/
+scp -i ~/.ssh/<key>.pem config/agents/*.md ubuntu@<EC2_IP>:/auto-dev/config/agents/
 
 # Just watcher code
-scp -i ~/.ssh/<key>.pem watcher/*.py ubuntu@<EC2_IP>:/autonomous-claude/watcher/
+scp -i ~/.ssh/<key>.pem watcher/*.py ubuntu@<EC2_IP>:/auto-dev/watcher/
 ```
 
 ---
@@ -362,7 +365,7 @@ claude auth status
 claude auth login
 
 # Check for errors in logs
-tail -50 /autonomous-claude/logs/<agent>.log
+tail -50 /auto-dev/logs/<agent>.log
 
 # Check Python dependencies
 source venv/bin/activate
@@ -389,7 +392,7 @@ docker logs qdrant
 free -h
 
 # Clear old logs
-rm /autonomous-claude/logs/*.log
+rm /auto-dev/logs/*.log
 
 # Restart agents with fresh state
 ./scripts/start_agents.sh stop
@@ -400,21 +403,21 @@ rm /autonomous-claude/logs/*.log
 
 ```bash
 # Kill and restart specific agent
-./scripts/start_agents.sh stop hunter
-./scripts/start_agents.sh hunter
+./scripts/start_agents.sh stop pm
+./scripts/start_agents.sh pm
 ```
 
 ### Dashboard 502/Connection Refused
 
 ```bash
 # Check if running
-sudo systemctl status autonomous-claude-dashboard
+sudo systemctl status autodev-dashboard
 
 # Check port
 sudo lsof -i :8080
 
 # Restart
-sudo systemctl restart autonomous-claude-dashboard
+sudo systemctl restart autodev-dashboard
 ```
 
 ---
@@ -423,7 +426,7 @@ sudo systemctl restart autonomous-claude-dashboard
 
 ### Main Config
 
-File: `/autonomous-claude/config/settings.yaml`
+File: `/auto-dev/config/settings.yaml`
 
 Key settings:
 ```yaml
@@ -471,19 +474,17 @@ Codex CLI notes:
 
 ### Agent Prompts
 
-Directory: `/autonomous-claude/config/agents/`
+Directory: `/auto-dev/config/agents/`
 
 Files:
-- `hunter.md` - Opportunity scanning (NO bounties/external repos)
-- `critic.md` - Idea evaluation (gatekeeper)
-- `pm.md` - Product specification
-- `builder.md` - Product creation (NO research/external repos)
+- `pm.md` - Product management, backlog, user stories
+- `architect.md` - Technical design and specifications
+- `builder.md` - Code implementation
 - `reviewer.md` - Code review (security, quality, maintainability)
-- `tester.md` - Three-phase QA (build, functional, customer experience)
-- `publisher.md` - Deployment and marketing
-- `meta.md` - Swarm evolution
-- `liaison.md` - Human interface
-- `support.md` - GitHub/npm issue monitoring
+- `tester.md` - Testing and quality assurance
+- `security.md` - Security scanning and audits
+- `devops.md` - CI/CD and deployment
+- `bug_finder.md` - Proactive bug detection
 
 ---
 
@@ -493,26 +494,26 @@ Credentials are stored in AWS SSM Parameter Store:
 
 ```bash
 # View stored credentials
-aws ssm get-parameters-by-path --path "/autonomous-claude" --query "Parameters[].Name"
+aws ssm get-parameters-by-path --path "/auto-dev" --query "Parameters[].Name"
 
 # Add/update credential
 aws ssm put-parameter \
-  --name "/autonomous-claude/gumroad/email" \
+  --name "/auto-dev/gumroad/email" \
   --value "your@email.com" \
   --type "SecureString" \
   --overwrite
 ```
 
 Required for publishing:
-- `/autonomous-claude/gumroad/email`
-- `/autonomous-claude/gumroad/password`
-- `/autonomous-claude/github/token`
-- `/autonomous-claude/npm/token`
-- `/autonomous-claude/vercel/token`
-- `/autonomous-claude/apify/api_key`
+- `/auto-dev/gumroad/email`
+- `/auto-dev/gumroad/password`
+- `/auto-dev/github/token`
+- `/auto-dev/npm/token`
+- `/auto-dev/vercel/token`
+- `/auto-dev/apify/api_key`
 
 Optional (Codex fallback):
-- `/autonomous-claude/openai/api_key` (only if you want API-key auth instead of device login)
+- `/auto-dev/openai/api_key` (only if you want API-key auth instead of device login)
 
 ---
 
@@ -561,35 +562,35 @@ aws ec2 describe-instances --instance-ids <INSTANCE_ID> \
 ```bash
 # List all credentials
 aws ssm get-parameters-by-path \
-  --path "/autonomous-claude" \
+  --path "/auto-dev" \
   --query "Parameters[].Name" \
   --output table
 
 # Get specific credential (decrypted)
 aws ssm get-parameter \
-  --name "/autonomous-claude/gumroad/email" \
+  --name "/auto-dev/gumroad/email" \
   --with-decryption \
   --query "Parameter.Value" \
   --output text
 
 # Store new credential
 aws ssm put-parameter \
-  --name "/autonomous-claude/stripe/secret_key" \
+  --name "/auto-dev/stripe/secret_key" \
   --value "sk_live_xxx" \
   --type "SecureString"
 
 # Update existing credential
 aws ssm put-parameter \
-  --name "/autonomous-claude/gumroad/password" \
+  --name "/auto-dev/gumroad/password" \
   --value "new_password" \
   --type "SecureString" \
   --overwrite
 
 # Delete credential
-aws ssm delete-parameter --name "/autonomous-claude/old/credential"
+aws ssm delete-parameter --name "/auto-dev/old/credential"
 
 # Check if credential exists
-aws ssm get-parameter --name "/autonomous-claude/gumroad/email" \
+aws ssm get-parameter --name "/auto-dev/gumroad/email" \
   --query "Parameter.Name" --output text 2>/dev/null && echo "EXISTS" || echo "MISSING"
 ```
 
@@ -690,7 +691,7 @@ sqlite3 data/memory/short_term.db "SELECT * FROM income_log ORDER BY id DESC LIM
 
 ```bash
 # Simple cron check - add to crontab
-*/5 * * * * /autonomous-claude/scripts/health_check.sh >> /var/log/claude-health.log
+*/5 * * * * /auto-dev/scripts/health_check.sh >> /var/log/claude-health.log
 ```
 
 ---
@@ -708,11 +709,11 @@ ssh -i ~/.ssh/<key>.pem ubuntu@<IP>
 ./scripts/start_agents.sh status        # Check status
 ./scripts/start_agents.sh               # Start all
 ./scripts/start_agents.sh stop          # Stop all
-./scripts/start_agents.sh hunter        # Start one
+./scripts/start_agents.sh pm            # Start one
 
 # === VIEW AGENT ACTIVITY ===
-tmux attach -t claude-hunter            # Live view (Ctrl+B,D to detach)
-tail -f logs/hunter.log                 # View logs
+tmux attach -t claude-pm            # Live view (Ctrl+B,D to detach)
+tail -f logs/pm.log                 # View logs
 http://<IP>:8080                        # Dashboard
 
 # === TASK MANAGEMENT ===
@@ -725,13 +726,13 @@ aws ec2 stop-instances --instance-ids <ID>    # Stop (saves $$$)
 aws ec2 describe-instances --instance-ids <ID> --query 'Reservations[0].Instances[0].State.Name'
 
 # === AWS: CREDENTIALS ===
-aws ssm get-parameters-by-path --path "/autonomous-claude" --query "Parameters[].Name"
-aws ssm put-parameter --name "/autonomous-claude/key" --value "val" --type SecureString --overwrite
-aws ssm get-parameter --name "/autonomous-claude/key" --with-decryption --query "Parameter.Value"
+aws ssm get-parameters-by-path --path "/auto-dev" --query "Parameters[].Name"
+aws ssm put-parameter --name "/auto-dev/key" --value "val" --type SecureString --overwrite
+aws ssm get-parameter --name "/auto-dev/key" --with-decryption --query "Parameter.Value"
 
 # === DEPLOY CHANGES ===
 rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' \
-  -e "ssh -i ~/.ssh/<key>.pem" . ubuntu@<IP>:/autonomous-claude/
+  -e "ssh -i ~/.ssh/<key>.pem" . ubuntu@<IP>:/auto-dev/
 # Then on EC2:
 ./scripts/start_agents.sh stop && ./scripts/start_agents.sh
 ```

@@ -56,8 +56,11 @@ dev:
 run:
 	./venv/bin/python -m dashboard.server
 
-run-supervisor:
-	./venv/bin/python -m watcher.supervisor --all-agents
+run-agents:
+	./venv/bin/python -m watcher.agent_runner --all-agents
+
+# Backwards compatibility alias
+run-supervisor: run-agents
 
 run-scheduler:
 	./venv/bin/python -m watcher.scheduler

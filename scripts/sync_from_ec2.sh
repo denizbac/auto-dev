@@ -18,7 +18,7 @@ echo "🔄 Syncing from EC2 ($EC2_IP)..."
 # Files to sync (code that swarm might modify)
 SYNC_FILES=(
     "watcher/orchestrator.py"
-    "watcher/supervisor.py"
+    "watcher/agent_runner.py"
     "watcher/memory.py"
     "watcher/gumroad_publisher.py"
     "config/settings.yaml"

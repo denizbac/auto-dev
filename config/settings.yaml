@@ -33,9 +33,8 @@ llm:
         - "--json"
         - "--dangerously-bypass-approvals-and-sandbox"
         - "--skip-git-repo-check"
-      model_map:
-        primary: "gpt-4.1"
-        fast: "gpt-4.1-mini"
+      # Empty model_map for ChatGPT device auth (no model selection allowed)
+      model_map: {}
     claude:
       command: "claude"
       prompt_flag: "-p"

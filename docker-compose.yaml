@@ -4,19 +4,56 @@
 # Services:
 # - postgres: Primary database for tasks, repos, approvals
 # - qdrant: Vector database for long-term memory
-# - redis: Task queue and caching
+# - redis: Task queue and agent coordination
 # - dashboard: Web UI and API
 # - webhook: GitLab webhook receiver
 # - scheduler: Cron job runner
-# - supervisor: Agent process manager (runs all agents)
+# - pm, architect, builder, etc.: Individual agent containers
 #
 # Usage:
-#   docker-compose up -d                    # Start all services
-#   docker-compose up -d postgres redis     # Start dependencies only
-#   docker-compose logs -f dashboard        # View dashboard logs
-#   docker-compose exec postgres psql -U autodev  # Connect to DB
+#   docker-compose up -d                              # Start all services
+#   docker-compose up -d postgres redis dashboard     # Start core services only
+#   docker-compose up -d pm architect builder         # Start specific agents
+#   docker-compose logs -f pm                         # View PM agent logs
 
 version: '3.8'
+
+# =============================================================================
+# Shared Configuration (YAML Anchors)
+# =============================================================================
+
+x-agent-common: &agent-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  environment: &agent-env
+    - DB_HOST=postgres
+    - DB_USER=autodev
+    - DB_PASSWORD=${DB_PASSWORD:-autodev_secret}
+    - DB_NAME=autodev
+    - REDIS_URL=redis://redis:6379
+    - QDRANT_HOST=qdrant
+    - GITLAB_TOKEN=${GITLAB_TOKEN}
+    - CODEX_API_KEY=${CODEX_API_KEY}
+    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    - AUTODEV_LLM_PROVIDER=${AUTODEV_LLM_PROVIDER:-codex}
+  volumes: &agent-volumes
+    - ./config:/auto-dev/config:ro
+    - ./data:/auto-dev/data
+    - ./logs:/auto-dev/logs
+    - /home/ubuntu/.codex:/home/autodev/.codex:rw
+  depends_on: &agent-depends
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD-SHELL", "cat /proc/1/cmdline | grep -q agent_runner || exit 1"]
+    interval: 30s
+    timeout: 10s
+    start_period: 10s
+    retries: 3
 
 services:
   # =============================================================================
@@ -122,12 +159,17 @@ services:
       - DB_HOST=postgres
       - DB_USER=autodev
       - DB_PASSWORD=${DB_PASSWORD:-autodev_secret}
+      - DB_NAME=autodev
+      - REDIS_URL=redis://redis:6379
+      - QDRANT_HOST=qdrant
       - GITLAB_WEBHOOK_SECRET=${GITLAB_WEBHOOK_SECRET}
     volumes:
       - ./config:/auto-dev/config:ro
       - ./logs:/auto-dev/logs
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     command: ["python", "-m", "integrations.webhook_server"]
 
@@ -141,6 +183,8 @@ services:
       - DB_HOST=postgres
       - DB_USER=autodev
       - DB_PASSWORD=${DB_PASSWORD:-autodev_secret}
+      - DB_NAME=autodev
+      - REDIS_URL=redis://redis:6379
     volumes:
       - ./config:/auto-dev/config:ro
       - ./logs:/auto-dev/logs
@@ -149,44 +193,49 @@ services:
         condition: service_healthy
     command: ["python", "-m", "watcher.scheduler"]
 
-  # Agent Supervisor - runs all agents
-  supervisor:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: autodev-supervisor
-    restart: unless-stopped
-    environment:
-      - DB_HOST=postgres
-      - DB_USER=autodev
-      - DB_PASSWORD=${DB_PASSWORD:-autodev_secret}
-      - REDIS_URL=redis://redis:6379
-      - QDRANT_HOST=qdrant
-      - GITLAB_TOKEN=${GITLAB_TOKEN}
-      - CODEX_API_KEY=${CODEX_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - AUTODEV_LLM_PROVIDER=${AUTODEV_LLM_PROVIDER:-codex}
-    volumes:
-      - ./config:/auto-dev/config:ro
-      - ./watcher:/auto-dev/watcher:ro
-      - ./integrations:/auto-dev/integrations:ro
-      - ./dashboard:/auto-dev/dashboard:ro
-      - ./data:/auto-dev/data
-      - ./logs:/auto-dev/logs
-      # Mount codex CLI and credentials from host
-      # The codex script is at /usr/bin/codex and expects vendor at /usr/vendor/
-      - /usr/bin/codex:/usr/bin/codex:ro
-      - /usr/lib/node_modules/@openai/codex/vendor:/usr/vendor:ro
-      # Codex needs write access to its config dir for skills and state
-      - /home/ubuntu/.codex:/home/autodev/.codex:rw
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-    command: ["python", "-m", "watcher.supervisor", "--agent", "pm"]
+  # =============================================================================
+  # Agent Services (one container per agent type)
+  # =============================================================================
+
+  pm:
+    <<: *agent-common
+    container_name: autodev-pm
+    command: ["python", "-m", "watcher.agent_runner", "--agent", "pm"]
+
+  architect:
+    <<: *agent-common
+    container_name: autodev-architect
+    command: ["python", "-m", "watcher.agent_runner", "--agent", "architect"]
+
+  builder:
+    <<: *agent-common
+    container_name: autodev-builder
+    command: ["python", "-m", "watcher.agent_runner", "--agent", "builder"]
+
+  reviewer:
+    <<: *agent-common
+    container_name: autodev-reviewer
+    command: ["python", "-m", "watcher.agent_runner", "--agent", "reviewer"]
+
+  tester:
+    <<: *agent-common
+    container_name: autodev-tester
+    command: ["python", "-m", "watcher.agent_runner", "--agent", "tester"]
+
+  security:
+    <<: *agent-common
+    container_name: autodev-security
+    command: ["python", "-m", "watcher.agent_runner", "--agent", "security"]
+
+  devops:
+    <<: *agent-common
+    container_name: autodev-devops
+    command: ["python", "-m", "watcher.agent_runner", "--agent", "devops"]
+
+  bug-finder:
+    <<: *agent-common
+    container_name: autodev-bugfinder
+    command: ["python", "-m", "watcher.agent_runner", "--agent", "bug_finder"]
 
   # =============================================================================
   # Development/Optional Services

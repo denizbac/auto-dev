@@ -7,12 +7,14 @@
 #
 # Usage:
 #   ./start_agents.sh              # Start all agents
-#   ./start_agents.sh hunter       # Start only hunter
-#   ./start_agents.sh critic       # Start only critic (idea evaluation)
+#   ./start_agents.sh pm           # Start only PM agent
+#   ./start_agents.sh architect    # Start only architect
 #   ./start_agents.sh builder      # Start only builder
-#   ./start_agents.sh tester       # Start only tester (QA)
-#   ./start_agents.sh publisher    # Start only publisher
-#   ./start_agents.sh master       # Start only master (general purpose)
+#   ./start_agents.sh reviewer     # Start only reviewer
+#   ./start_agents.sh tester       # Start only tester
+#   ./start_agents.sh security     # Start only security scanner
+#   ./start_agents.sh devops       # Start only devops agent
+#   ./start_agents.sh bug_finder   # Start only bug finder
 #   ./start_agents.sh stop         # Stop all agents
 #   ./start_agents.sh status       # Check status of all agents
 #
@@ -21,13 +23,16 @@
 set -e
 
 # Configuration
-PROJECT_DIR="/autonomous-claude"
+PROJECT_DIR="/auto-dev"
 VENV_DIR="${PROJECT_DIR}/venv"
 LOG_DIR="${PROJECT_DIR}/logs"
-SUPERVISOR="${PROJECT_DIR}/watcher/supervisor.py"
+AGENT_RUNNER="${PROJECT_DIR}/watcher/agent_runner.py"
 
-# Agent definitions (order matters: hunter finds, critic evaluates, pm specs, builder creates, reviewer reviews, tester validates, publisher ships, meta evolves, liaison communicates, support monitors)
-AGENTS=("hunter" "critic" "pm" "builder" "reviewer" "tester" "publisher" "meta" "liaison" "support")
+# Agent definitions matching config/settings.yaml
+# pm: project management, architect: design, builder: implementation,
+# reviewer: code review, tester: QA, security: security scanning,
+# devops: deployment, bug_finder: static analysis
+AGENTS=("pm" "architect" "builder" "reviewer" "tester" "security" "devops" "bug_finder")
 
 # Colors for output
 RED='\033[0;31m'
@@ -70,9 +75,9 @@ check_prerequisites() {
         exit 1
     fi
     
-    # Check supervisor exists
-    if [ ! -f "${SUPERVISOR}" ]; then
-        log_error "Supervisor not found at ${SUPERVISOR}"
+    # Check agent runner exists
+    if [ ! -f "${AGENT_RUNNER}" ]; then
+        log_error "Agent runner not found at ${AGENT_RUNNER}"
         exit 1
     fi
     
@@ -102,7 +107,7 @@ start_agent() {
     
     # Create tmux session with the agent
     tmux new-session -d -s "${session_name}" \
-        "cd ${PROJECT_DIR} && source ${VENV_DIR}/bin/activate && python ${SUPERVISOR} --agent ${agent} 2>&1 | tee -a ${LOG_DIR}/${agent}.log"
+        "cd ${PROJECT_DIR} && source ${VENV_DIR}/bin/activate && python ${AGENT_RUNNER} --agent ${agent} 2>&1 | tee -a ${LOG_DIR}/${agent}.log"
     
     # Give it a moment to start
     sleep 2

@@ -200,8 +200,13 @@ async def delete_repo(repo_id: str, hard_delete: bool = False) -> Dict[str, Any]
 
 
 @router.get("/{repo_id}/webhook")
-async def get_webhook_info(repo_id: str) -> WebhookInfo:
-    """Get webhook setup information for a repository."""
+async def get_webhook_info(repo_id: str, regenerate: bool = False) -> WebhookInfo:
+    """Get webhook setup information for a repository.
+
+    Args:
+        repo_id: Repository ID
+        regenerate: If True, generate a new secret (only time full secret is shown)
+    """
     if not orchestrator:
         raise HTTPException(status_code=500, detail="Orchestrator not initialized")
 
@@ -212,20 +217,26 @@ async def get_webhook_info(repo_id: str) -> WebhookInfo:
     # Generate or retrieve webhook secret
     settings = repo.get("settings", {}) or {}
     webhook_secret = settings.get("webhook_secret")
+    is_new_secret = False
 
-    if not webhook_secret:
-        # Generate new secret
+    if not webhook_secret or regenerate:
+        # Generate new secret - this is the only time we show it in full
         webhook_secret = secrets.token_hex(32)
         settings["webhook_secret"] = webhook_secret
         orchestrator.update_repo(repo_id, settings=settings)
+        is_new_secret = True
 
     # Get the dashboard URL from environment or default
     base_url = os.environ.get("AUTO_DEV_URL", "http://localhost:8080")
     webhook_url = f"{base_url}/webhook/gitlab/{repo_id}"
 
+    # Mask secret if not newly generated (security: don't expose on every read)
+    display_secret = webhook_secret if is_new_secret else f"{webhook_secret[:8]}...{webhook_secret[-4:]}"
+    secret_note = "" if is_new_secret else "\n\n**Note**: Secret is masked. Use `?regenerate=true` to generate a new one."
+
     return WebhookInfo(
         webhook_url=webhook_url,
-        webhook_secret=webhook_secret,
+        webhook_secret=display_secret,
         events=[
             "push_events",
             "merge_request_events",
@@ -241,7 +252,7 @@ async def get_webhook_info(repo_id: str) -> WebhookInfo:
 3. Add a new webhook with these settings:
 
    **URL**: {webhook_url}
-   **Secret Token**: {webhook_secret}
+   **Secret Token**: {display_secret}
 
    **Trigger events**:
    - ✅ Push events
@@ -253,7 +264,7 @@ async def get_webhook_info(repo_id: str) -> WebhookInfo:
 4. Click "Add webhook"
 5. Test the webhook using the "Test" button
 
-The webhook will route events to the appropriate Auto-Dev agents.
+The webhook will route events to the appropriate Auto-Dev agents.{secret_note}
 """
     )
 

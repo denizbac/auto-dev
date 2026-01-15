@@ -2,8 +2,8 @@
 # ================================================
 # Multi-stage build for minimal production image
 
-# Build stage
-FROM python:3.11-slim as builder
+# Stage 1: Python dependencies builder
+FROM python:3.11-slim as python-builder
 
 WORKDIR /build
 
@@ -17,7 +17,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Production stage
+# Stage 2: React frontend builder
+FROM node:20-slim as frontend-builder
+
+WORKDIR /app
+
+# Copy frontend package files
+COPY dashboard/frontend/package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy frontend source
+COPY dashboard/frontend/ ./
+
+# Build production bundle
+RUN npm run build
+
+# Stage 3: Production image
 FROM python:3.11-slim
 
 WORKDIR /auto-dev
@@ -35,28 +52,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @openai/codex@0.80.0 @anthropic-ai/claude-code@2.1.7 \
     && useradd -m -s /bin/bash autodev
 
 # Copy Python packages from builder
-COPY --from=builder /root/.local /home/autodev/.local
+COPY --from=python-builder /root/.local /home/autodev/.local
 ENV PATH=/home/autodev/.local/bin:$PATH
 
 # Copy application code
 COPY --chown=autodev:autodev config/ ./config/
-COPY --chown=autodev:autodev dashboard/ ./dashboard/
+COPY --chown=autodev:autodev dashboard/*.py ./dashboard/
 COPY --chown=autodev:autodev watcher/ ./watcher/
 COPY --chown=autodev:autodev integrations/ ./integrations/
 COPY --chown=autodev:autodev scripts/ ./scripts/
 
+# Copy React build from frontend builder
+COPY --from=frontend-builder --chown=autodev:autodev /app/dist ./dashboard/frontend/dist
+
 # Create data directories
-RUN mkdir -p data/workspaces data/specs data/memory logs \
+RUN mkdir -p data/workspaces data/specs data/memory data/projects logs \
     && chown -R autodev:autodev /auto-dev
 
 USER autodev
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+# Note: Health checks are defined per-service in docker-compose.yaml
+# Dashboard uses: curl -f http://localhost:8080/health
+# Agents use: pgrep -f agent_runner (process-based check)
 
 # Default command (can be overridden)
 CMD ["python", "-m", "dashboard.server"]

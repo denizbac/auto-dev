@@ -6,6 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Auto-Dev is an autonomous software development system that uses 8 AI agents to develop software on GitLab repositories. Uses Codex (primary) with Claude as fallback. Agents handle the full lifecycle: analysis, specs, implementation, review, testing, security, deployment.
 
+## EC2 Connection
+
+```bash
+# SSH to EC2 instance
+EC2_IP=$(cd terraform && terraform output -raw public_ip)
+ssh -i ~/.ssh/auto-dev.pem ubuntu@$EC2_IP
+
+# Or one-liner:
+ssh -i ~/.ssh/auto-dev.pem ubuntu@$(cd terraform && terraform output -raw public_ip)
+```
+
 ## Commands
 
 ```bash
@@ -16,12 +27,12 @@ createdb autodev  # PostgreSQL required
 
 # Start System
 python dashboard/server.py                    # Dashboard on :8080
-python watcher/supervisor.py --agent pm       # Start specific agent
+python -m watcher.agent_runner --agent pm     # Start specific agent
 
 # Deployment
-cd terraform && terraform output              # Get EC2 info
+EC2_IP=$(cd terraform && terraform output -raw public_ip)
 rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' \
-  -e "ssh -i ~/.ssh/<key>.pem" . ubuntu@<IP>:/auto-dev/
+  -e "ssh -i ~/.ssh/auto-dev.pem" . ubuntu@$EC2_IP:/auto-dev/
 
 # On EC2
 ./scripts/start_agents.sh status              # Check agents
@@ -34,9 +45,9 @@ tmux attach -t claude-<agent>                 # View session (Ctrl+B, D detach)
 
 ```
 watcher/
-├── supervisor.py      # Spawns agent processes, manages tmux sessions
-├── orchestrator_pg.py # PostgreSQL task queue (primary)
-├── orchestrator.py    # SQLite fallback
+├── agent_runner.py    # Spawns agent processes, manages LLM sessions
+├── orchestrator_pg.py # PostgreSQL orchestrator (primary, used by all components)
+├── orchestrator.py    # SQLite orchestrator (legacy fallback, not used in production)
 ├── reflection.py      # Agent learning/improvement system
 ├── scheduler.py       # Cron-based job scheduling
 └── memory.py          # Short-term (SQLite) + long-term (Qdrant) memory
@@ -46,10 +57,21 @@ integrations/
 └── gitlab_webhook.py  # Webhook event handler
 
 dashboard/
-├── server.py          # FastAPI app
+├── server.py          # FastAPI app (uses orchestrator_pg)
 ├── repos.py           # Multi-repo management
 └── slack_bot.py       # Slack integration
 ```
+
+## Database
+
+PostgreSQL is the primary database. All components (dashboard, agents, scheduler) use `orchestrator_pg.py` which auto-detects the database from environment variables:
+
+- `DB_HOST` - PostgreSQL host (e.g., `postgres`)
+- `DB_NAME` - Database name (default: `autodev`)
+- `DB_USER` - Database user (default: `autodev`)
+- `DB_PASSWORD` - Database password
+
+If `DB_HOST` is not set, falls back to SQLite at `/auto-dev/data/orchestrator.db`.
 
 ## Agent Workflow
 

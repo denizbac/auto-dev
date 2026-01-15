@@ -2,7 +2,7 @@
 Autonomous Claude Watcher Package
 =================================
 
-Provides the supervisor and memory systems for the autonomous agent.
+Provides the agent runner and memory systems for the autonomous agents.
 """
 
 from .memory import (
@@ -14,23 +14,32 @@ from .memory import (
     create_memory_systems
 )
 
-from .supervisor import (
-    AutonomousClaudeWatcher,
-    ClaudeWorkerProcess,
+from .agent_runner import (
+    AgentRunner,
+    AgentWorkerProcess,
     SessionStats,
-    WatcherState
+    AgentState
 )
+
+# Backwards compatibility aliases
+AutonomousClaudeWatcher = AgentRunner
+ClaudeWorkerProcess = AgentWorkerProcess
+WatcherState = AgentState
 
 __all__ = [
     'ShortTermMemory',
-    'LongTermMemory', 
+    'LongTermMemory',
     'IncomeEntry',
     'ShortTermMemoryDB',
     'LongTermMemoryDB',
     'create_memory_systems',
+    'AgentRunner',
+    'AgentWorkerProcess',
+    'SessionStats',
+    'AgentState',
+    # Backwards compatibility
     'AutonomousClaudeWatcher',
     'ClaudeWorkerProcess',
-    'SessionStats',
     'WatcherState'
 ]
 
