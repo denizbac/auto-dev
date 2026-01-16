@@ -369,6 +369,20 @@ class MultiTenantOrchestrator:
             if self.db.db_type == 'postgresql':
                 logger.info("Ensuring PostgreSQL schema is up to date...")
 
+                # Migration: Convert repos.id from UUID to TEXT if needed
+                # This is necessary because older schemas used UUID type
+                try:
+                    cursor.execute("SAVEPOINT repos_migration")
+                    cursor.execute("""
+                        ALTER TABLE repos
+                        ALTER COLUMN id TYPE TEXT USING id::TEXT
+                    """)
+                    cursor.execute("RELEASE SAVEPOINT repos_migration")
+                    logger.info("Migrated repos.id from UUID to TEXT")
+                except Exception:
+                    cursor.execute("ROLLBACK TO SAVEPOINT repos_migration")
+                    # Table doesn't exist or already TEXT - continue
+
             # Repos table - central registry of managed repositories
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS repos (
@@ -385,6 +399,20 @@ class MultiTenantOrchestrator:
                     updated_at TEXT NOT NULL
                 )
             """)
+
+            # Migration: Convert tasks columns from UUID to TEXT if needed
+            if self.db.db_type == 'postgresql':
+                for table, col in [('tasks', 'id'), ('tasks', 'repo_id'),
+                                   ('dev_approvals', 'id'), ('dev_approvals', 'repo_id')]:
+                    try:
+                        cursor.execute(f"SAVEPOINT migrate_{table}_{col}")
+                        cursor.execute(f"""
+                            ALTER TABLE {table}
+                            ALTER COLUMN {col} TYPE TEXT USING {col}::TEXT
+                        """)
+                        cursor.execute(f"RELEASE SAVEPOINT migrate_{table}_{col}")
+                    except Exception:
+                        cursor.execute(f"ROLLBACK TO SAVEPOINT migrate_{table}_{col}")
 
             # Tasks table with repo_id for multi-tenant isolation
             # Note: Using task_type to match PostgreSQL schema
