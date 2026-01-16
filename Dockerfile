@@ -69,9 +69,12 @@ COPY --chown=autodev:autodev scripts/ ./scripts/
 # Copy React build from frontend builder
 COPY --from=frontend-builder --chown=autodev:autodev /app/dist ./dashboard/frontend/dist
 
-# Create data directories
-RUN mkdir -p data/workspaces data/specs data/memory data/projects logs \
-    && chown -R autodev:autodev /auto-dev
+# Create data directories and symlink .codex to EFS for credential persistence
+RUN mkdir -p data/workspaces data/specs data/memory data/projects data/.codex data/.claude logs \
+    && chown -R autodev:autodev /auto-dev \
+    && ln -s /auto-dev/data/.codex /home/autodev/.codex \
+    && ln -s /auto-dev/data/.claude /home/autodev/.claude \
+    && chown -h autodev:autodev /home/autodev/.codex /home/autodev/.claude
 
 USER autodev
 

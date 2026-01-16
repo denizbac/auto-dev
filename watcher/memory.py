@@ -32,17 +32,6 @@ class ShortTermMemory:
 
 
 @dataclass
-class IncomeEntry:
-    """Represents an income log entry."""
-    id: Optional[int]
-    timestamp: str
-    source: str
-    amount: float
-    currency: str
-    description: str
-
-
-@dataclass
 class LongTermMemory:
     """Represents a long-term memory entry."""
     id: str
@@ -84,17 +73,6 @@ class ShortTermMemoryDB:
             """)
             
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS income_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    amount REAL NOT NULL,
-                    currency TEXT NOT NULL,
-                    description TEXT
-                )
-            """)
-            
-            conn.execute("""
                 CREATE TABLE IF NOT EXISTS token_usage (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp TEXT NOT NULL,
@@ -107,7 +85,6 @@ class ShortTermMemoryDB:
             
             # Create indexes
             conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_timestamp ON memories(timestamp)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_income_timestamp ON income_log(timestamp)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tokens_timestamp ON token_usage(timestamp)")
             
             conn.commit()
@@ -199,37 +176,6 @@ class ShortTermMemoryDB:
                 )
                 for row in cursor.fetchall()
             ]
-    
-    def log_income(self, entry: IncomeEntry) -> int:
-        """Log an income entry."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO income_log (timestamp, source, amount, currency, description)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (entry.timestamp, entry.source, entry.amount, entry.currency, entry.description)
-            )
-            conn.commit()
-            return cursor.lastrowid
-    
-    def get_income_summary(self, days: int = 30) -> Dict[str, float]:
-        """Get income summary by source for the last N days."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                """
-                SELECT source, currency, SUM(amount) as total
-                FROM income_log
-                WHERE timestamp >= datetime('now', ? || ' days')
-                GROUP BY source, currency
-                """,
-                (-days,)
-            )
-            summary = {}
-            for row in cursor.fetchall():
-                key = f"{row[0]}_{row[1]}"
-                summary[key] = row[2]
-            return summary
     
     def log_token_usage(self, session_id: str, tokens_input: int, 
                         tokens_output: int, cost_usd: float) -> None:

@@ -181,8 +181,8 @@ resource "aws_ecs_task_definition" "dashboard" {
   family                   = "${var.project_name}-dashboard"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = 256
-  memory                   = 512
+  cpu                      = 512
+  memory                   = 1024
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
   task_role_arn            = aws_iam_role.ecs_task_dashboard.arn  # Dashboard needs ECS permissions
 
@@ -266,6 +266,9 @@ resource "aws_ecs_service" "dashboard" {
   task_definition = aws_ecs_task_definition.dashboard.arn
   desired_count   = 1
   launch_type     = "FARGATE"
+
+  enable_execute_command = true  # Allow exec into containers for debugging
+  health_check_grace_period_seconds = 120  # Allow time for task startup before health checks
 
   network_configuration {
     subnets          = data.aws_subnets.default.ids
@@ -534,6 +537,8 @@ resource "aws_ecs_service" "agents" {
   task_definition = aws_ecs_task_definition.agents[each.key].arn
   desired_count   = 1  # Always running, Redis soft-pause controls processing
   launch_type     = "FARGATE"
+
+  enable_execute_command = true  # Allow exec into containers for debugging/auth
 
   network_configuration {
     subnets          = data.aws_subnets.default.ids

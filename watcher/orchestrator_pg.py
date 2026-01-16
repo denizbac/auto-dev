@@ -364,16 +364,10 @@ class MultiTenantOrchestrator:
             cursor = conn.cursor()
             p = self.db.placeholder
 
-            # For PostgreSQL, check if tables exist and skip if they do
-            # (the existing schema may differ but should be compatible)
+            # For PostgreSQL, we use CREATE TABLE IF NOT EXISTS for all tables
+            # This allows adding new tables without breaking existing installations
             if self.db.db_type == 'postgresql':
-                cursor.execute("""
-                    SELECT COUNT(*) FROM information_schema.tables
-                    WHERE table_schema = 'public' AND table_name = 'repos'
-                """)
-                if cursor.fetchone()[0] > 0:
-                    logger.info("PostgreSQL tables already exist, skipping schema creation")
-                    return
+                logger.info("Ensuring PostgreSQL schema is up to date...")
 
             # Repos table - central registry of managed repositories
             cursor.execute("""
@@ -520,6 +514,34 @@ class MultiTenantOrchestrator:
                 )
             """)
 
+            # Task outcomes - tracks success/failure for learning system
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS task_outcomes (
+                    id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    repo_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    task_type TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    duration_seconds INTEGER,
+                    error_summary TEXT,
+                    context_summary TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
+            # Processed issues - deduplication for webhook events
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS processed_issues (
+                    id TEXT PRIMARY KEY,
+                    issue_id TEXT NOT NULL,
+                    repo_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    processed_at TEXT NOT NULL,
+                    UNIQUE(issue_id, repo_id, action)
+                )
+            """)
+
             # Create indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_repo ON tasks(repo_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
@@ -527,6 +549,11 @@ class MultiTenantOrchestrator:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_approvals_repo ON dev_approvals(repo_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_approvals_status ON dev_approvals(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_status_repo ON agent_status(repo_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_agent ON task_outcomes(agent_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_repo ON task_outcomes(repo_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_type ON task_outcomes(task_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_created ON task_outcomes(created_at DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_processed_issues_repo ON processed_issues(repo_id)")
 
             conn.commit()
 
@@ -1351,6 +1378,176 @@ class MultiTenantOrchestrator:
                     WHERE agent_id = {p}
                 """, (total_tokens, agent_id))
             conn.commit()
+
+    # ==================== Task Outcomes (Learning System) ====================
+
+    def record_outcome(
+        self,
+        task_id: str,
+        repo_id: str,
+        agent_id: str,
+        task_type: str,
+        outcome: str,
+        duration_seconds: Optional[int] = None,
+        error_summary: Optional[str] = None,
+        context_summary: Optional[str] = None
+    ) -> str:
+        """
+        Record the outcome of a completed task for learning purposes.
+
+        Args:
+            task_id: ID of the completed task
+            repo_id: Repository the task belongs to
+            agent_id: Agent that executed the task
+            task_type: Type of task (implement_fix, review_mr, etc.)
+            outcome: 'success', 'failure', or 'partial'
+            duration_seconds: How long the task took
+            error_summary: Brief description of error if failed
+            context_summary: Brief description of what the task involved
+
+        Returns:
+            ID of the created outcome record
+        """
+        outcome_id = str(uuid.uuid4())
+        now = datetime.utcnow().isoformat()
+
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            p = self.db.placeholder
+            cursor.execute(f"""
+                INSERT INTO task_outcomes
+                (id, task_id, repo_id, agent_id, task_type, outcome,
+                 duration_seconds, error_summary, context_summary, created_at)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+            """, (
+                outcome_id, task_id, repo_id, agent_id, task_type, outcome,
+                duration_seconds, error_summary, context_summary, now
+            ))
+            conn.commit()
+
+        logger.info(f"Recorded outcome for task {task_id}: {outcome}")
+        return outcome_id
+
+    def get_recent_outcomes(
+        self,
+        agent_id: Optional[str] = None,
+        task_type: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        outcome: Optional[str] = None,
+        limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """
+        Get recent task outcomes with optional filters.
+
+        Args:
+            agent_id: Filter by specific agent
+            task_type: Filter by task type
+            repo_id: Filter by repository
+            outcome: Filter by outcome ('success', 'failure', 'partial')
+            limit: Maximum results to return
+
+        Returns:
+            List of outcome records as dictionaries
+        """
+        conditions = []
+        params = []
+        p = self.db.placeholder
+
+        if agent_id:
+            conditions.append(f"agent_id = {p}")
+            params.append(agent_id)
+        if task_type:
+            conditions.append(f"task_type = {p}")
+            params.append(task_type)
+        if repo_id:
+            conditions.append(f"repo_id = {p}")
+            params.append(repo_id)
+        if outcome:
+            conditions.append(f"outcome = {p}")
+            params.append(outcome)
+
+        where_clause = ' AND '.join(conditions) if conditions else '1=1'
+        params.append(limit)
+
+        rows = self.db.execute_many(f"""
+            SELECT * FROM task_outcomes
+            WHERE {where_clause}
+            ORDER BY created_at DESC
+            LIMIT {p}
+        """, params)
+
+        return [dict(row) for row in rows]
+
+    def get_outcome_stats(
+        self,
+        repo_id: Optional[str] = None,
+        days: int = 30
+    ) -> Dict[str, Any]:
+        """
+        Get aggregated outcome statistics.
+
+        Args:
+            repo_id: Optional repository filter
+            days: Number of days to include
+
+        Returns:
+            Dictionary with stats by agent and task type
+        """
+        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        p = self.db.placeholder
+
+        conditions = [f"created_at >= {p}"]
+        params = [cutoff]
+
+        if repo_id:
+            conditions.append(f"repo_id = {p}")
+            params.append(repo_id)
+
+        where_clause = ' AND '.join(conditions)
+
+        # Stats by agent
+        agent_rows = self.db.execute_many(f"""
+            SELECT
+                agent_id,
+                COUNT(*) as total,
+                SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) as success,
+                SUM(CASE WHEN outcome = 'failure' THEN 1 ELSE 0 END) as failure,
+                SUM(CASE WHEN outcome = 'partial' THEN 1 ELSE 0 END) as partial,
+                AVG(duration_seconds) as avg_duration
+            FROM task_outcomes
+            WHERE {where_clause}
+            GROUP BY agent_id
+            ORDER BY total DESC
+        """, params)
+
+        # Stats by task type
+        type_rows = self.db.execute_many(f"""
+            SELECT
+                task_type,
+                COUNT(*) as total,
+                SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) as success,
+                SUM(CASE WHEN outcome = 'failure' THEN 1 ELSE 0 END) as failure
+            FROM task_outcomes
+            WHERE {where_clause}
+            GROUP BY task_type
+            ORDER BY total DESC
+        """, params)
+
+        # Recent failures
+        failure_rows = self.db.execute_many(f"""
+            SELECT agent_id, task_type, error_summary, created_at
+            FROM task_outcomes
+            WHERE {where_clause} AND outcome = 'failure' AND error_summary IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 10
+        """, params)
+
+        return {
+            'by_agent': [dict(row) for row in agent_rows],
+            'by_task_type': [dict(row) for row in type_rows],
+            'recent_failures': [dict(row) for row in failure_rows],
+            'period_days': days
+        }
 
 
 # ==================== Singleton Access ====================

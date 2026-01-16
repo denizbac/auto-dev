@@ -435,47 +435,6 @@ def get_recent_memories(limit: int = 50) -> List[Dict]:
         conn.close()
 
 
-def get_income_data(days: int = 30) -> Dict[str, Any]:
-    """Get income data and statistics."""
-    conn = get_db_connection()
-    if not conn:
-        return {"entries": [], "total": 0, "by_source": {}}
-    
-    try:
-        # Get income entries
-        cursor = conn.execute(
-            """
-            SELECT * FROM income_log 
-            WHERE timestamp >= datetime('now', ? || ' days')
-            ORDER BY timestamp DESC
-            """,
-            (-days,)
-        )
-        entries = [dict(row) for row in cursor.fetchall()]
-        
-        # Calculate totals by source
-        by_source = {}
-        total = 0
-        for entry in entries:
-            source = entry.get('source', 'unknown')
-            amount = entry.get('amount', 0)
-            currency = entry.get('currency', 'USD')
-            
-            key = f"{source}_{currency}"
-            by_source[key] = by_source.get(key, 0) + amount
-            
-            if currency == 'USD':
-                total += amount
-        
-        return {
-            "entries": entries,
-            "total": total,
-            "by_source": by_source
-        }
-    finally:
-        conn.close()
-
-
 def get_token_stats(days: int = 7) -> Dict[str, Any]:
     """Get token usage statistics from orchestrator's token_usage table."""
     try:
@@ -567,12 +526,6 @@ async def api_memories(limit: int = 50):
     return {"memories": get_recent_memories(limit)}
 
 
-@app.get("/api/income")
-async def api_income(days: int = 30):
-    """Get income data."""
-    return get_income_data(days)
-
-
 @app.get("/api/tokens")
 async def api_tokens(days: int = 7):
     """Get token usage stats."""
@@ -588,27 +541,14 @@ async def api_screenshots(limit: int = 20):
 @app.get("/api/stats")
 async def api_stats():
     """Get aggregated statistics."""
-    income = get_income_data(30)
     tokens = get_token_stats(7)
     memories = get_recent_memories(10)
-    
-    # Calculate efficiency (income per 1000 tokens)
-    efficiency = 0
-    if tokens['total'] > 0:
-        efficiency = (income['total'] / tokens['total']) * 1000
-    
+
     return {
-        "income": {
-            "total_30d": income['total'],
-            "by_source": income['by_source']
-        },
         "tokens": {
             "total_7d": tokens['total'],
             "cost_7d": tokens.get('total_cost', 0),
             "daily_average": tokens['daily_average']
-        },
-        "efficiency": {
-            "income_per_1k_tokens": efficiency
         },
         "recent_activity": memories[:5]
     }
@@ -1052,23 +992,6 @@ def init_postgres_schema():
                 active BOOLEAN DEFAULT true
             )""",
 
-            """CREATE TABLE IF NOT EXISTS gitlab_objects (
-                id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-                repo_id UUID REFERENCES repos(id) ON DELETE CASCADE,
-                object_type TEXT NOT NULL CHECK (object_type IN ('epic', 'issue', 'merge_request', 'pipeline')),
-                gitlab_id INTEGER NOT NULL,
-                gitlab_iid INTEGER,
-                title TEXT,
-                state TEXT,
-                labels TEXT[],
-                created_by_agent TEXT,
-                task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
-                metadata JSONB DEFAULT '{}',
-                created_at TIMESTAMP DEFAULT NOW(),
-                updated_at TIMESTAMP DEFAULT NOW(),
-                UNIQUE(repo_id, object_type, gitlab_id)
-            )""",
-
             "CREATE INDEX IF NOT EXISTS idx_tasks_repo_status ON tasks(repo_id, status)",
             "CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON tasks(status, priority DESC)",
             "CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at DESC)",
@@ -1080,7 +1003,6 @@ def init_postgres_schema():
             "CREATE INDEX IF NOT EXISTS idx_agent_status_heartbeat ON agent_status(last_heartbeat DESC)",
             "CREATE INDEX IF NOT EXISTS idx_reflections_repo_agent ON reflections(repo_id, agent_type)",
             "CREATE INDEX IF NOT EXISTS idx_learnings_repo_agent ON learnings(repo_id, agent_type) WHERE active = true",
-            "CREATE INDEX IF NOT EXISTS idx_gitlab_objects_repo_type ON gitlab_objects(repo_id, object_type)",
         ]
 
         for stmt in statements:
@@ -1268,6 +1190,122 @@ async def react_routes():
         return FileResponse(react_index)
     # Fallback to legacy HTML
     return HTMLResponse(content=DASHBOARD_HTML)
+
+
+# ==================== Task Outcomes (Learning System) ====================
+
+@app.get("/api/outcomes")
+async def get_outcomes(
+    agent: str = None,
+    task_type: str = None,
+    repo_id: str = None,
+    outcome: str = None,
+    limit: int = 50
+):
+    """Get recent task outcomes with optional filters."""
+    conn = get_orchestrator_db()
+    if not conn:
+        return {"outcomes": [], "error": "No database connection"}
+
+    try:
+        # Build query
+        query = "SELECT * FROM task_outcomes WHERE 1=1"
+        params = []
+
+        if agent:
+            query += " AND agent_id = ?"
+            params.append(agent)
+        if task_type:
+            query += " AND task_type = ?"
+            params.append(task_type)
+        if repo_id:
+            query += " AND repo_id = ?"
+            params.append(repo_id)
+        if outcome:
+            query += " AND outcome = ?"
+            params.append(outcome)
+
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = conn.execute(query, params)
+        outcomes = [dict(row) for row in cursor.fetchall()]
+
+        return {"outcomes": outcomes}
+    except Exception as e:
+        return {"outcomes": [], "error": str(e)}
+    finally:
+        conn.close()
+
+
+@app.get("/api/outcomes/stats")
+async def get_outcome_stats(repo_id: str = None, days: int = 30):
+    """Get aggregated outcome statistics for the learning dashboard."""
+    conn = get_orchestrator_db()
+    if not conn:
+        return {"by_agent": [], "by_task_type": [], "recent_failures": [], "period_days": days}
+
+    try:
+        from datetime import datetime, timedelta
+        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+        where_clause = "created_at >= ?"
+        params = [cutoff]
+
+        if repo_id:
+            where_clause += " AND repo_id = ?"
+            params.append(repo_id)
+
+        # Stats by agent
+        cursor = conn.execute(f"""
+            SELECT
+                agent_id,
+                COUNT(*) as total,
+                SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) as success,
+                SUM(CASE WHEN outcome = 'failure' THEN 1 ELSE 0 END) as failure,
+                SUM(CASE WHEN outcome = 'partial' THEN 1 ELSE 0 END) as partial,
+                AVG(duration_seconds) as avg_duration
+            FROM task_outcomes
+            WHERE {where_clause}
+            GROUP BY agent_id
+            ORDER BY total DESC
+        """, params)
+        by_agent = [dict(row) for row in cursor.fetchall()]
+
+        # Stats by task type
+        cursor = conn.execute(f"""
+            SELECT
+                task_type,
+                COUNT(*) as total,
+                SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) as success,
+                SUM(CASE WHEN outcome = 'failure' THEN 1 ELSE 0 END) as failure
+            FROM task_outcomes
+            WHERE {where_clause}
+            GROUP BY task_type
+            ORDER BY total DESC
+        """, params)
+        by_task_type = [dict(row) for row in cursor.fetchall()]
+
+        # Recent failures
+        cursor = conn.execute(f"""
+            SELECT agent_id, task_type, error_summary, context_summary, created_at
+            FROM task_outcomes
+            WHERE {where_clause} AND outcome = 'failure'
+            ORDER BY created_at DESC
+            LIMIT 10
+        """, params)
+        recent_failures = [dict(row) for row in cursor.fetchall()]
+
+        return {
+            "by_agent": by_agent,
+            "by_task_type": by_task_type,
+            "recent_failures": recent_failures,
+            "period_days": days
+        }
+    except Exception as e:
+        return {"by_agent": [], "by_task_type": [], "recent_failures": [], "period_days": days, "error": str(e)}
+    finally:
+        conn.close()
 
 
 @app.get("/api/agent-statuses")
@@ -1659,99 +1697,71 @@ async def get_proposals(status: str = None):
 # ==================== HUMAN APPROVAL QUEUE ====================
 
 @app.get("/api/approvals")
-async def get_approvals(status: str = None):
-    """Get approval queue items."""
-    conn = get_orchestrator_db()
-    if not conn:
-        return {"approvals": [], "pending_count": 0}
-    
+async def get_approvals(status: str = None, repo_id: str = None):
+    """Get dev approval queue items using orchestrator_pg."""
     try:
+        orchestrator = get_orchestrator()
+
+        # List approvals - if no status specified, get all
         if status:
-            cursor = conn.execute(
-                "SELECT * FROM approval_queue WHERE status = ? ORDER BY created_at DESC",
-                (status,)
-            )
+            approvals = orchestrator.list_approvals(repo_id=repo_id, status=status, limit=50)
         else:
-            cursor = conn.execute(
-                "SELECT * FROM approval_queue ORDER BY created_at DESC LIMIT 50"
-            )
-        
-        approvals = [dict(row) for row in cursor.fetchall()]
-        
+            # Get both pending and recent reviewed
+            pending = orchestrator.list_approvals(repo_id=repo_id, status='pending', limit=50)
+            approved = orchestrator.list_approvals(repo_id=repo_id, status='approved', limit=20)
+            rejected = orchestrator.list_approvals(repo_id=repo_id, status='rejected', limit=10)
+            approvals = pending + approved + rejected
+
+        # Convert DevApproval objects to dicts
+        approval_dicts = []
+        for a in approvals:
+            approval_dicts.append({
+                'id': a.id,
+                'repo_id': a.repo_id,
+                'approval_type': a.approval_type,
+                'title': a.title,
+                'description': a.description,
+                'context': a.context,
+                'submitted_by': a.submitted_by,
+                'status': a.status,
+                'reviewer_notes': a.reviewer_notes,
+                'gitlab_ref': a.gitlab_ref,
+                'created_at': a.created_at,
+                'reviewed_at': a.reviewed_at
+            })
+
         # Get pending count
-        pending = conn.execute(
-            "SELECT COUNT(*) FROM approval_queue WHERE status = 'pending'"
-        ).fetchone()[0]
-        
-        return {"approvals": approvals, "pending_count": pending}
+        pending_approvals = orchestrator.list_approvals(repo_id=repo_id, status='pending', limit=1000)
+        pending_count = len(pending_approvals)
+
+        return {"approvals": approval_dicts, "pending_count": pending_count}
     except Exception as e:
+        logger.error(f"Error getting approvals: {e}")
         return {"approvals": [], "pending_count": 0, "error": str(e)}
-    finally:
-        conn.close()
 
 
 @app.post("/api/approvals/{item_id}/approve")
 async def approve_item(item_id: str, request: Request):
-    """Approve an item for publishing."""
+    """Approve a dev workflow item (spec, merge, deploy) using orchestrator_pg."""
     try:
         body = await request.json()
         notes = body.get('notes', '')
     except (json.JSONDecodeError, ValueError, AttributeError):
         notes = ''
 
-    conn = get_orchestrator_db()
-    if not conn:
-        return JSONResponse({"error": "Database unavailable"}, status_code=500)
-
     try:
-        now = datetime.utcnow().isoformat()
-        cursor = conn.execute("""
-            UPDATE approval_queue 
-            SET status = 'approved', reviewer_notes = ?, reviewed_at = ?
-            WHERE id = ? AND status = 'pending'
-        """, (notes, now, item_id))
-        conn.commit()
-        
-        if cursor.rowcount > 0:
-            # Get item details and create publish task
-            row = conn.execute("SELECT * FROM approval_queue WHERE id = ?", (item_id,)).fetchone()
-            if row:
-                # Create publish task
-                import uuid
-                task_id = str(uuid.uuid4())
-                conn.execute("""
-                    INSERT INTO tasks (id, type, priority, payload, status, created_by, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    task_id, 'publish', 9,
-                    json.dumps({
-                        "approval_id": item_id,
-                        "product_name": row['product_name'],
-                        "platform": row['platform'],
-                        "files_path": row['files_path'],
-                        "price": row['price']
-                    }),
-                    'pending', 'human', now
-                ))
-                
-                # Post to discussion
-                conn.execute("""
-                    INSERT INTO discussions (id, author, topic, content, created_at)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    str(uuid.uuid4()), 'human', 'approvals',
-                    f"✅ APPROVED: {row['product_name']} - Ready to publish on {row['platform']}!",
-                    now
-                ))
-                conn.commit()
-            
-            return {"success": True, "message": f"Approved: {row['product_name'] if row else item_id}"}
+        orchestrator = get_orchestrator()
+
+        # The orchestrator.approve() handles post-approval actions (creating follow-up tasks)
+        success = orchestrator.approve(item_id, reviewer_notes=notes)
+
+        if success:
+            return {"success": True, "message": f"Approved: {item_id}"}
         else:
             return JSONResponse({"error": "Item not found or already reviewed"}, status_code=404)
     except Exception as e:
+        logger.error(f"Error approving {item_id}: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
-    finally:
-        conn.close()
 
 
 @app.post("/api/chat")
@@ -1883,47 +1893,25 @@ async def send_directive(request: Request):
 
 @app.post("/api/approvals/{item_id}/reject")
 async def reject_item(item_id: str, request: Request):
-    """Reject an item - will NOT be published."""
+    """Reject a dev workflow item using orchestrator_pg."""
     try:
         body = await request.json()
         reason = body.get('reason', 'No reason provided')
     except (json.JSONDecodeError, ValueError, AttributeError):
         reason = 'No reason provided'
 
-    conn = get_orchestrator_db()
-    if not conn:
-        return JSONResponse({"error": "Database unavailable"}, status_code=500)
-
     try:
-        now = datetime.utcnow().isoformat()
-        cursor = conn.execute("""
-            UPDATE approval_queue
-            SET status = 'rejected', reviewer_notes = ?, reviewed_at = ?
-            WHERE id = ? AND status = 'pending'
-        """, (reason, now, item_id))
-        conn.commit()
-        
-        if cursor.rowcount > 0:
-            row = conn.execute("SELECT * FROM approval_queue WHERE id = ?", (item_id,)).fetchone()
-            if row:
-                import uuid
-                conn.execute("""
-                    INSERT INTO discussions (id, author, topic, content, created_at)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    str(uuid.uuid4()), 'human', 'approvals',
-                    f"❌ REJECTED: {row['product_name']} - Reason: {reason}",
-                    now
-                ))
-                conn.commit()
-            
-            return {"success": True, "message": f"Rejected: {row['product_name'] if row else item_id}"}
+        orchestrator = get_orchestrator()
+
+        success = orchestrator.reject(item_id, reviewer_notes=reason)
+
+        if success:
+            return {"success": True, "message": f"Rejected: {item_id}"}
         else:
             return JSONResponse({"error": "Item not found or already reviewed"}, status_code=404)
     except Exception as e:
+        logger.error(f"Error rejecting {item_id}: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
-    finally:
-        conn.close()
 
 
 @app.websocket("/ws")
@@ -4561,7 +4549,21 @@ DASHBOARD_HTML = """
                 <div class="empty-state">No open proposals</div>
             </div>
         </div>
-        
+
+        <!-- LEARNINGS - Agent performance and learning system -->
+        <div class="panel" style="margin-bottom: 24px; border: 2px solid var(--accent-blue);">
+            <div class="panel-header" style="background: rgba(0, 168, 255, 0.1);">
+                <div class="panel-title">
+                    <span>📊</span>
+                    Agent Learnings
+                </div>
+                <span style="font-size: 12px; color: var(--accent-blue);">Performance tracking and improvement</span>
+            </div>
+            <div class="panel-content" id="learningsPanel" style="max-height: 500px; overflow-y: auto;">
+                <div class="empty-state">Loading learnings...</div>
+            </div>
+        </div>
+
         <!-- HUMAN APPROVAL QUEUE - Nothing publishes without your review! -->
         <div class="panel" style="margin-bottom: 24px; border: 2px solid var(--accent-orange);">
             <div class="panel-header" style="background: rgba(255, 107, 53, 0.1);">
@@ -5249,7 +5251,97 @@ DASHBOARD_HTML = """
                 console.error('Failed to fetch proposals:', error);
             }
         }
-        
+
+        // Fetch agent learnings and performance stats
+        async function fetchLearnings() {
+            try {
+                const response = await fetch(`${API_BASE}/api/outcomes/stats?days=30`);
+                const data = await response.json();
+
+                const container = document.getElementById('learningsPanel');
+                const byAgent = data.by_agent || [];
+                const failures = data.recent_failures || [];
+
+                if (byAgent.length === 0 && failures.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No task outcomes recorded yet. Agents will start learning soon!</div>';
+                    return;
+                }
+
+                let html = '';
+
+                // Agent performance table
+                if (byAgent.length > 0) {
+                    html += `
+                        <div style="margin-bottom: 16px;">
+                            <div style="font-weight: 600; margin-bottom: 8px; color: var(--text-secondary);">Agent Performance (Last 30 Days)</div>
+                            <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+                                <thead>
+                                    <tr style="border-bottom: 1px solid var(--border-color);">
+                                        <th style="text-align: left; padding: 8px 4px;">Agent</th>
+                                        <th style="text-align: right; padding: 8px 4px;">Tasks</th>
+                                        <th style="text-align: right; padding: 8px 4px;">Success</th>
+                                        <th style="text-align: right; padding: 8px 4px;">Rate</th>
+                                        <th style="text-align: left; padding: 8px 4px; width: 100px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                    `;
+
+                    byAgent.forEach(agent => {
+                        const rate = agent.total > 0 ? Math.round((agent.success / agent.total) * 100) : 0;
+                        const rateColor = rate >= 80 ? 'var(--accent-green)' : rate >= 60 ? 'var(--accent-orange)' : 'var(--accent-red)';
+                        html += `
+                            <tr style="border-bottom: 1px solid var(--border-color);">
+                                <td style="padding: 8px 4px; font-weight: 500;">${escapeHtml(agent.agent_id)}</td>
+                                <td style="text-align: right; padding: 8px 4px;">${agent.total}</td>
+                                <td style="text-align: right; padding: 8px 4px; color: var(--accent-green);">${agent.success}</td>
+                                <td style="text-align: right; padding: 8px 4px; color: ${rateColor};">${rate}%</td>
+                                <td style="padding: 8px 4px;">
+                                    <div style="height: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden;">
+                                        <div style="width: ${rate}%; height: 100%; background: ${rateColor};"></div>
+                                    </div>
+                                </td>
+                            </tr>
+                        `;
+                    });
+
+                    html += '</tbody></table></div>';
+                }
+
+                // Recent failures
+                if (failures.length > 0) {
+                    html += `
+                        <div>
+                            <div style="font-weight: 600; margin-bottom: 8px; color: var(--accent-red);">Recent Failures</div>
+                    `;
+
+                    failures.forEach(f => {
+                        const time = new Date(f.created_at).toLocaleString();
+                        html += `
+                            <div style="background: rgba(255, 71, 87, 0.1); border-radius: 6px; padding: 10px; margin-bottom: 8px; border-left: 3px solid var(--accent-red);">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                    <span style="font-weight: 500;">${escapeHtml(f.agent_id)}</span>
+                                    <span style="font-size: 11px; color: var(--text-muted);">${time}</span>
+                                </div>
+                                <div style="font-size: 12px; color: var(--text-secondary);">
+                                    <span style="color: var(--accent-purple);">${escapeHtml(f.task_type)}</span>
+                                    ${f.error_summary ? ` - ${escapeHtml(f.error_summary)}` : ''}
+                                </div>
+                                ${f.context_summary ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">${escapeHtml(f.context_summary.substring(0, 100))}${f.context_summary.length > 100 ? '...' : ''}</div>` : ''}
+                            </div>
+                        `;
+                    });
+
+                    html += '</div>';
+                }
+
+                container.innerHTML = html;
+            } catch (error) {
+                console.error('Failed to fetch learnings:', error);
+                document.getElementById('learningsPanel').innerHTML = '<div class="empty-state">Error loading learnings</div>';
+            }
+        }
+
         // Fetch human approval queue
         async function fetchApprovals() {
             try {
@@ -5732,6 +5824,7 @@ DASHBOARD_HTML = """
         fetchTasks();
         fetchDiscussions();
         fetchProposals();
+        fetchLearnings();
         fetchApprovals();
         fetchChat();
         
@@ -5746,6 +5839,7 @@ DASHBOARD_HTML = """
             fetchTasks();
             fetchDiscussions();
             fetchProposals();
+            fetchLearnings();
             fetchApprovals();
             fetchChat();
         }, 5000);

@@ -104,6 +104,17 @@ resource "aws_iam_role_policy" "ecs_task" {
           "logs:PutLogEvents"
         ]
         Resource = "arn:aws:logs:${var.aws_region}:*:log-group:/ecs/${var.project_name}/*"
+      },
+      # ECS Exec - SSM Session Manager permissions
+      {
+        Effect = "Allow"
+        Action = [
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel"
+        ]
+        Resource = "*"
       }
     ]
   })

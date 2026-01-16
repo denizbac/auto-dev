@@ -94,13 +94,14 @@ class SessionStats:
     error_message: Optional[str] = None
 
 
-@dataclass 
+@dataclass
 class AgentState:
     """Current state of the agent runner."""
     agent_id: str = "master"
     is_running: bool = False
     current_session: Optional[SessionStats] = None
     current_task: Optional[Task] = None
+    task_start_time: Optional[datetime] = None  # Track when current task started
     retry_task: Optional[Task] = None
     total_sessions: int = 0
     total_tokens_today: int = 0
@@ -637,9 +638,11 @@ If this task should be handed off to another agent, indicate that clearly with t
             task_context = None
             # Always reset current_task to avoid completing stale tasks
             self.state.current_task = None
+            self.state.task_start_time = None
             if task:
                 task_context = self._build_task_context(task)
                 self.state.current_task = task
+                self.state.task_start_time = datetime.utcnow()  # Track start time for duration
             
             provider = self._select_provider()
             provider_config = self._get_provider_config(provider)
@@ -753,7 +756,9 @@ If this task should be handed off to another agent, indicate that clearly with t
         # Complete current task if any
         if self.state.current_task:
             task = self.state.current_task
+            task_start = self.state.task_start_time
             self.state.current_task = None
+            self.state.task_start_time = None
             if retry_task:
                 self.state.retry_task = task
             else:
@@ -766,7 +771,25 @@ If this task should be handed off to another agent, indicate that clearly with t
                 )
                 if success:
                     self.orchestrator.increment_completed(self.agent_id)
-        
+
+                # Record outcome for learning system
+                duration_seconds = None
+                if task_start:
+                    duration_seconds = int((datetime.utcnow() - task_start).total_seconds())
+                try:
+                    self.orchestrator.record_outcome(
+                        task_id=task.id,
+                        repo_id=task.repo_id,
+                        agent_id=self.agent_id,
+                        task_type=task.type,
+                        outcome='success' if success else 'failure',
+                        duration_seconds=duration_seconds,
+                        error_summary=f"Exit code {exit_code}" if not success else None,
+                        context_summary=task.payload.get('instruction', '')[:200] if isinstance(task.payload, dict) else None
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to record outcome: {e}")
+
         # Update status
         self.orchestrator.update_agent_status(self.agent_id, 'idle')
     
