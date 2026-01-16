@@ -1113,6 +1113,46 @@ async def create_task(request: Request):
         conn.close()
 
 
+@app.post("/api/tasks/reset-stale")
+async def reset_stale_tasks(hours: int = 1):
+    """Reset tasks that have been claimed for too long back to pending."""
+    conn = get_orchestrator_db()
+    if not conn:
+        return {"status": "error", "message": "Database not available"}
+
+    try:
+        # Find tasks claimed more than X hours ago
+        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+
+        cursor = conn.execute("""
+            SELECT id, task_type, assigned_to, claimed_at
+            FROM tasks
+            WHERE status = 'claimed' AND claimed_at < ?
+        """, (cutoff,))
+        stale_tasks = cursor.fetchall()
+
+        if not stale_tasks:
+            return {"status": "ok", "reset_count": 0, "message": "No stale tasks found"}
+
+        # Reset them to pending
+        task_ids = [t[0] if isinstance(t, tuple) else t['id'] for t in stale_tasks]
+        placeholders = ','.join(['?' for _ in task_ids])
+        conn.execute(f"""
+            UPDATE tasks
+            SET status = 'pending', claimed_at = NULL, assigned_to = NULL
+            WHERE id IN ({placeholders})
+        """, task_ids)
+        conn.commit()
+
+        return {
+            "status": "ok",
+            "reset_count": len(task_ids),
+            "task_ids": task_ids
+        }
+    finally:
+        conn.close()
+
+
 @app.get("/api/agent-tasks")
 async def get_agent_tasks(agent: str = None, status: str = None, limit: int = 100):
     """Get tasks grouped by agent with optional filtering."""
