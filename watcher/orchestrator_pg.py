@@ -450,8 +450,7 @@ class MultiTenantOrchestrator:
                     approval_type TEXT,
                     approved_by TEXT,
                     approved_at TEXT,
-                    rejection_reason TEXT,
-                    FOREIGN KEY (repo_id) REFERENCES repos(id)
+                    rejection_reason TEXT
                 )
             """)
 
@@ -501,8 +500,7 @@ class MultiTenantOrchestrator:
                     reviewer_notes TEXT,
                     gitlab_ref TEXT,
                     created_at TEXT NOT NULL,
-                    reviewed_at TEXT,
-                    FOREIGN KEY (repo_id) REFERENCES repos(id)
+                    reviewed_at TEXT
                 )
             """)
 
