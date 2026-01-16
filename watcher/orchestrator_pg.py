@@ -429,12 +429,20 @@ class MultiTenantOrchestrator:
                     logger.warning(f"Skipping invalid column name: {col}")
                     continue
                 try:
+                    # Use savepoint for PostgreSQL to avoid transaction abort on error
+                    if self.db.db_type == 'postgresql':
+                        cursor.execute(f"SAVEPOINT migration_{col}")
                     if default is not None:
                         cursor.execute(f"ALTER TABLE tasks ADD COLUMN {col} {col_type} DEFAULT {default}")
                     else:
                         cursor.execute(f"ALTER TABLE tasks ADD COLUMN {col} {col_type}")
+                    if self.db.db_type == 'postgresql':
+                        cursor.execute(f"RELEASE SAVEPOINT migration_{col}")
                 except Exception as e:
                     # Column already exists - expected on subsequent runs
+                    # Rollback to savepoint to restore transaction state in PostgreSQL
+                    if self.db.db_type == 'postgresql':
+                        cursor.execute(f"ROLLBACK TO SAVEPOINT migration_{col}")
                     logger.debug(f"Migration column {col} already exists or failed: {e}")
 
             # Dev approvals table
