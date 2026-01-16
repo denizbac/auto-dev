@@ -369,6 +369,20 @@ class MultiTenantOrchestrator:
             if self.db.db_type == 'postgresql':
                 logger.info("Ensuring PostgreSQL schema is up to date...")
 
+                # Migration: Drop FK constraints before converting UUID to TEXT
+                # This is necessary because FKs prevent column type changes
+                fk_constraints = [
+                    ('tasks', 'tasks_repo_id_fkey'),
+                    ('dev_approvals', 'dev_approvals_repo_id_fkey'),
+                ]
+                for table, constraint in fk_constraints:
+                    try:
+                        cursor.execute(f"SAVEPOINT drop_fk_{table}")
+                        cursor.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {constraint}")
+                        cursor.execute(f"RELEASE SAVEPOINT drop_fk_{table}")
+                    except Exception:
+                        cursor.execute(f"ROLLBACK TO SAVEPOINT drop_fk_{table}")
+
                 # Migration: Convert repos.id from UUID to TEXT if needed
                 # This is necessary because older schemas used UUID type
                 try:

@@ -1,0 +1,462 @@
+# Autonomous Claude Swarm - Cursor Instructions
+
+## Quick Reference
+
+```bash
+# === GET EC2 INFO ===
+cd terraform && terraform output
+
+# === SSH INTO EC2 ===
+ssh -i ~/.ssh/<key>.pem ubuntu@<EC2_IP>
+
+# === ON EC2: MANAGE AGENTS ===
+cd /autonomous-claude
+./scripts/start_agents.sh status    # Check all
+./scripts/start_agents.sh           # Start all
+./scripts/start_agents.sh stop      # Stop all
+./scripts/start_agents.sh hunter    # Start one
+tmux attach -t claude-hunter        # View live (Ctrl+B,D to detach)
+tail -f logs/hunter.log             # View logs
+
+# === AWS: MANAGE INSTANCE ===
+aws ec2 describe-instances --instance-ids <ID> --query 'Reservations[0].Instances[0].State.Name'
+aws ec2 start-instances --instance-ids <ID>
+aws ec2 stop-instances --instance-ids <ID>
+
+# === AWS: MANAGE CREDENTIALS ===
+aws ssm get-parameters-by-path --path "/autonomous-claude" --query "Parameters[].Name"
+aws ssm put-parameter --name "/autonomous-claude/gumroad/email" --value "x" --type SecureString --overwrite
+
+# === DEPLOY CHANGES ===
+rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' -e "ssh -i ~/.ssh/<key>.pem" . ubuntu@<IP>:/autonomous-claude/
+```
+
+---
+
+## Project Overview
+
+This is an autonomous AI agent swarm running on EC2. The swarm consists of specialized agents that work together to generate income through digital products, freelancing, and content creation.
+
+## Architecture
+
+```
+EC2 Instance (Ubuntu)
+├── /autonomous-claude/           # Project root on EC2
+│   ├── watcher/                  # Agent supervisor & orchestrator
+│   ├── config/agents/            # Agent prompts (hunter, builder, etc.)
+│   ├── data/projects/            # Agent workspace for building products
+│   ├── data/memory/              # SQLite short-term memory
+│   ├── logs/                     # Agent logs
+│   └── dashboard/                # FastAPI dashboard (port 8080)
+└── Qdrant (Docker, port 6333)    # Long-term vector memory
+```
+
+## Agents
+
+| Agent | Role | Task Types |
+|-------|------|------------|
+| hunter | Scans platforms for opportunities | scan_platform, research |
+| critic | Evaluates ideas (gatekeeper) | evaluate_idea |
+| pm | Creates product specifications | write_spec |
+| builder | Creates products and tools | build_product, fix_product |
+| reviewer | Code review before testing | code_review |
+| tester | QA validation (customer-centric) | test_product |
+| publisher | Deploys and markets | deploy, write_content, market |
+| meta | Swarm architect | Creates/modifies agents |
+| liaison | Human interface | Responds to directives |
+| support | Monitors GitHub/npm issues | monitor_github, triage_issue |
+
+## Product Workflow
+
+```
+Hunter → Critic → PM → Builder → Reviewer → Tester → Publisher
+  ↓        ↓                        ↓          ↓
+(find)  (gate)                   (code     (functional
+                                 review)    + CX test)
+```
+
+**Quality Gates:**
+1. **Critic**: Blocks bad ideas, bounty work, external contributions
+2. **Reviewer**: Code review for security, quality, maintainability
+3. **Tester**: Three-phase testing (build, functional, customer experience)
+4. **Human Approval**: Required before publishing paid products
+
+## EC2 Connection
+
+### Get SSH Command
+```bash
+cd terraform && terraform output ssh_command
+```
+
+### SSH Into EC2
+```bash
+ssh -i ~/.ssh/<key_name>.pem ubuntu@<EC2_IP>
+```
+
+### Get EC2 IP
+```bash
+cd terraform && terraform output public_ip
+```
+
+## Managing Agents on EC2
+
+### Check Status
+```bash
+# SSH in first, then:
+cd /autonomous-claude
+./scripts/start_agents.sh status
+```
+
+### Start All Agents
+```bash
+./scripts/start_agents.sh
+```
+
+### Start Specific Agent
+```bash
+./scripts/start_agents.sh hunter
+./scripts/start_agents.sh builder
+```
+
+### Stop All Agents
+```bash
+./scripts/start_agents.sh stop
+```
+
+### Stop Specific Agent
+```bash
+./scripts/start_agents.sh stop hunter
+```
+
+### View Agent Session (Live)
+```bash
+tmux attach -t claude-hunter
+tmux attach -t claude-builder
+# Detach with: Ctrl+B, then D
+```
+
+### View Logs
+```bash
+tail -f /autonomous-claude/logs/hunter.log
+tail -f /autonomous-claude/logs/builder.log
+```
+
+## Dashboard
+
+- URL: `http://<EC2_IP>:8080`
+- Get URL: `cd terraform && terraform output dashboard_url`
+
+Dashboard shows:
+- Agent status
+- Task queue
+- Approval queue (products awaiting human approval)
+- Income tracking
+- Memory/logs
+
+## Task Management
+
+### View Pending Tasks
+```bash
+# On EC2:
+cd /autonomous-claude
+source venv/bin/activate
+python -c "from watcher.orchestrator import get_orchestrator; o = get_orchestrator(); print(o.get_queue_stats())"
+```
+
+### CLI Tools (on EC2)
+```bash
+# Swarm communication
+./bin/claude-swarm discuss --recent
+./bin/claude-swarm proposals
+./bin/claude-swarm status
+
+# Task management
+./bin/claude-tasks list
+./bin/claude-tasks create --type build_product --priority 7 --payload '{"idea": "..."}'
+```
+
+## Deploying Code Changes
+
+### Push Changes to EC2
+```bash
+# From local machine:
+rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' \
+  -e "ssh -i ~/.ssh/<key>.pem" \
+  . ubuntu@<EC2_IP>:/autonomous-claude/
+```
+
+### Or use the deploy script:
+```bash
+./scripts/deploy.sh
+```
+
+### After Deploying
+```bash
+# SSH into EC2, restart affected agents:
+./scripts/start_agents.sh stop
+./scripts/start_agents.sh
+```
+
+## Common Issues
+
+### Agent Not Starting
+```bash
+# Check if Claude CLI is authenticated:
+claude auth status
+
+# Check logs for errors:
+tail -100 /autonomous-claude/logs/<agent>.log
+```
+
+### Qdrant Not Running
+```bash
+docker ps | grep qdrant
+docker restart qdrant
+```
+
+### Dashboard Not Loading
+```bash
+# Check if running:
+sudo systemctl status autonomous-claude-dashboard
+
+# Restart:
+sudo systemctl restart autonomous-claude-dashboard
+
+# Or run manually:
+cd /autonomous-claude/dashboard
+source ../venv/bin/activate
+python server.py
+```
+
+### Out of Tokens
+- Check daily budget in config/settings.yaml
+- With Claude Max subscription (tokens.daily_budget: 0), this shouldn't happen
+- API users: check ANTHROPIC_API_KEY and quota
+
+## Human Approval Queue
+
+Products built by agents go to the approval queue before publishing:
+
+1. Check dashboard → Approval Queue
+2. Review product files in `/autonomous-claude/data/projects/<product>/`
+3. Approve or reject via dashboard
+4. Approved items create publish tasks for Publisher agent
+
+## File Locations (on EC2)
+
+| Path | Contents |
+|------|----------|
+| `/autonomous-claude/config/agents/` | Agent prompts |
+| `/autonomous-claude/config/settings.yaml` | Configuration |
+| `/autonomous-claude/data/projects/` | Built products |
+| `/autonomous-claude/data/specs/` | Product specifications (from PM) |
+| `/autonomous-claude/data/memory/` | SQLite databases |
+| `/autonomous-claude/logs/` | Agent logs |
+| `/autonomous-claude/skills/` | Skill templates |
+| `/autonomous-claude/scripts/github_monitor.py` | GitHub issue monitor (Support agent) |
+| `/autonomous-claude/templates/product_spec.md` | Spec template for PM agent |
+
+## When Asked to Manage the Swarm
+
+1. First, get EC2 connection info: `cd terraform && terraform output`
+2. SSH into EC2
+3. Check status: `./scripts/start_agents.sh status`
+4. Take requested action (start/stop/view logs/etc.)
+5. If deploying changes, use rsync or deploy.sh
+
+## AWS CLI Management
+
+### Prerequisites
+```bash
+# Check AWS CLI is configured
+aws sts get-caller-identity
+
+# If not configured:
+aws configure
+# Enter: Access Key, Secret Key, Region (us-east-1), Output (json)
+```
+
+### EC2 Instance Management
+
+```bash
+# Get instance ID from terraform
+cd terraform && terraform output instance_id
+
+# Check instance status
+aws ec2 describe-instance-status --instance-ids <INSTANCE_ID>
+
+# Start instance
+aws ec2 start-instances --instance-ids <INSTANCE_ID>
+
+# Stop instance (saves money when not using)
+aws ec2 stop-instances --instance-ids <INSTANCE_ID>
+
+# Reboot instance
+aws ec2 reboot-instances --instance-ids <INSTANCE_ID>
+
+# Get instance details
+aws ec2 describe-instances --instance-ids <INSTANCE_ID> \
+  --query 'Reservations[0].Instances[0].{State:State.Name,IP:PublicIpAddress,Type:InstanceType}'
+```
+
+### SSM Parameter Store (Credentials)
+
+All agent credentials are stored securely in AWS SSM:
+
+```bash
+# List all stored credentials
+aws ssm get-parameters-by-path \
+  --path "/autonomous-claude" \
+  --query "Parameters[].Name" \
+  --output table
+
+# Get a specific credential (decrypted)
+aws ssm get-parameter \
+  --name "/autonomous-claude/gumroad/email" \
+  --with-decryption \
+  --query "Parameter.Value" \
+  --output text
+
+# Store/update a credential
+aws ssm put-parameter \
+  --name "/autonomous-claude/gumroad/email" \
+  --value "your@email.com" \
+  --type "SecureString" \
+  --overwrite
+
+# Store new credential (first time)
+aws ssm put-parameter \
+  --name "/autonomous-claude/stripe/secret_key" \
+  --value "sk_live_xxx" \
+  --type "SecureString"
+
+# Delete a credential
+aws ssm delete-parameter --name "/autonomous-claude/old/credential"
+```
+
+#### Required Credentials for Publishing
+
+| SSM Path | Purpose |
+|----------|---------|
+| `/autonomous-claude/gumroad/email` | Gumroad login |
+| `/autonomous-claude/gumroad/password` | Gumroad password |
+| `/autonomous-claude/github/token` | GitHub PAT |
+| `/autonomous-claude/npm/token` | npm auth token |
+| `/autonomous-claude/vercel/token` | Vercel API token |
+| `/autonomous-claude/stripe/secret_key` | Stripe payments |
+
+### Security Groups
+
+```bash
+# Get security group ID
+cd terraform && terraform output security_group_id
+
+# List current rules
+aws ec2 describe-security-groups \
+  --group-ids <SG_ID> \
+  --query "SecurityGroups[0].IpPermissions"
+
+# Add SSH access from your IP
+MY_IP=$(curl -s ifconfig.me)
+aws ec2 authorize-security-group-ingress \
+  --group-id <SG_ID> \
+  --protocol tcp \
+  --port 22 \
+  --cidr ${MY_IP}/32
+
+# Add dashboard access (port 8080)
+aws ec2 authorize-security-group-ingress \
+  --group-id <SG_ID> \
+  --protocol tcp \
+  --port 8080 \
+  --cidr ${MY_IP}/32
+
+# Remove a rule
+aws ec2 revoke-security-group-ingress \
+  --group-id <SG_ID> \
+  --protocol tcp \
+  --port 8080 \
+  --cidr 0.0.0.0/0
+```
+
+### CloudWatch Logs (if configured)
+
+```bash
+# List log groups
+aws logs describe-log-groups --query "logGroups[].logGroupName"
+
+# Get recent logs
+aws logs get-log-events \
+  --log-group-name "/autonomous-claude/agents" \
+  --log-stream-name "hunter" \
+  --limit 50
+
+# Tail logs (requires aws logs tail)
+aws logs tail "/autonomous-claude/agents" --follow
+```
+
+### Cost Management
+
+```bash
+# Get current month costs
+aws ce get-cost-and-usage \
+  --time-period Start=$(date -v1d +%Y-%m-%d),End=$(date +%Y-%m-%d) \
+  --granularity MONTHLY \
+  --metrics BlendedCost \
+  --query 'ResultsByTime[0].Total.BlendedCost'
+
+# Get EC2 instance cost estimate
+aws ce get-cost-and-usage \
+  --time-period Start=$(date -v-7d +%Y-%m-%d),End=$(date +%Y-%m-%d) \
+  --granularity DAILY \
+  --filter '{"Dimensions":{"Key":"SERVICE","Values":["Amazon Elastic Compute Cloud - Compute"]}}' \
+  --metrics BlendedCost
+```
+
+### Terraform Commands
+
+```bash
+# From terraform/ directory:
+
+# See current state
+terraform show
+
+# Get all outputs
+terraform output
+
+# Plan changes (dry run)
+terraform plan
+
+# Apply changes
+terraform apply
+
+# Destroy everything (CAREFUL!)
+terraform destroy
+```
+
+### Quick AWS Checks
+
+```bash
+# Is instance running?
+aws ec2 describe-instances --instance-ids <ID> \
+  --query 'Reservations[0].Instances[0].State.Name' --output text
+
+# Get public IP
+aws ec2 describe-instances --instance-ids <ID> \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' --output text
+
+# Check if credentials exist
+aws ssm get-parameter --name "/autonomous-claude/gumroad/email" \
+  --query "Parameter.Name" --output text 2>/dev/null && echo "EXISTS" || echo "MISSING"
+```
+
+## Important Notes
+
+- Agents run in tmux sessions (`claude-<agent>`)
+- Don't edit files directly on EC2 unless urgent - use local + deploy
+- The dashboard (port 8080) needs security group to allow access
+- Gumroad credentials stored in AWS SSM Parameter Store
+- Human approval is REQUIRED for paid product deployment
+- **Stop EC2 when not in use** to save costs: `aws ec2 stop-instances --instance-ids <ID>`
+- Instance type is `t3.medium` (~$30/month if running 24/7)
+

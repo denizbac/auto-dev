@@ -1,0 +1,228 @@
+# deploy-multi-env.yml - Multi-Environment Deployment
+# Blue-green deployment to dev/staging/production with approval gates
+# Part of GitHub Actions Premium Pack
+
+name: Deploy Multi-Environment
+
+on:
+  push:
+    branches:
+      - develop
+      - staging
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      skip_tests:
+        description: 'Skip tests (emergency deploy)'
+        type: boolean
+        default: false
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # Determine target environment from branch or input
+  setup:
+    name: Setup Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      url: ${{ steps.env.outputs.url }}
+    steps:
+      - name: Determine environment
+        id: env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ENV="${{ github.event.inputs.environment }}"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            ENV="production"
+          elif [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
+            ENV="staging"
+          else
+            ENV="development"
+          fi
+
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+
+          case $ENV in
+            production)
+              echo "url=https://app.example.com" >> $GITHUB_OUTPUT
+              ;;
+            staging)
+              echo "url=https://staging.example.com" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "url=https://dev.example.com" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+  # Run tests before deployment
+  test:
+    name: Pre-Deploy Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    if: ${{ github.event.inputs.skip_tests != 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # Deploy to environment
+  deploy:
+    name: Deploy to ${{ needs.setup.outputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [setup, test]
+    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped')
+    environment:
+      name: ${{ needs.setup.outputs.environment }}
+      url: ${{ needs.setup.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for ${{ needs.setup.outputs.environment }}
+        run: npm run build
+        env:
+          NODE_ENV: ${{ needs.setup.outputs.environment }}
+
+      # Vercel Deployment
+      - name: Deploy to Vercel
+        if: ${{ vars.DEPLOY_TARGET == 'vercel' }}
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: ${{ needs.setup.outputs.environment == 'production' && '--prod' || '' }}
+
+      # AWS S3 + CloudFront Deployment
+      - name: Deploy to AWS S3
+        if: ${{ vars.DEPLOY_TARGET == 'aws' }}
+        run: |
+          aws s3 sync dist/ s3://${{ vars.S3_BUCKET }} --delete
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ vars.CLOUDFRONT_ID }} \
+            --paths "/*"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      # Netlify Deployment
+      - name: Deploy to Netlify
+        if: ${{ vars.DEPLOY_TARGET == 'netlify' }}
+        uses: nwtgck/actions-netlify@v3
+        with:
+          publish-dir: './dist'
+          production-deploy: ${{ needs.setup.outputs.environment == 'production' }}
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+
+  # Health check after deployment
+  health-check:
+    name: Health Check
+    runs-on: ubuntu-latest
+    needs: [setup, deploy]
+    steps:
+      - name: Wait for deployment
+        run: sleep 30
+
+      - name: Check deployment health
+        run: |
+          URL="${{ needs.setup.outputs.url }}"
+          echo "Checking $URL..."
+
+          for i in {1..5}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
+            if [[ "$STATUS" == "200" ]]; then
+              echo "Health check passed! Status: $STATUS"
+              exit 0
+            fi
+            echo "Attempt $i: Status $STATUS - retrying..."
+            sleep 10
+          done
+
+          echo "Health check failed after 5 attempts"
+          exit 1
+
+  # Rollback on failure
+  rollback:
+    name: Rollback
+    runs-on: ubuntu-latest
+    needs: [setup, health-check]
+    if: failure()
+    environment: ${{ needs.setup.outputs.environment }}
+    steps:
+      - name: Trigger rollback
+        run: |
+          echo "Deployment failed - initiating rollback"
+          echo "Environment: ${{ needs.setup.outputs.environment }}"
+          # Add your rollback logic here:
+          # - Revert Vercel deployment
+          # - Restore previous S3 version
+          # - etc.
+
+  # Notify team
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: [setup, deploy, health-check]
+    if: always()
+    steps:
+      - name: Slack notification
+        if: ${{ vars.SLACK_WEBHOOK_URL }}
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "${{ needs.health-check.result == 'success' && ':white_check_mark:' || ':x:' }} Deployment to ${{ needs.setup.outputs.environment }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*${{ needs.health-check.result == 'success' && 'Deployment Successful' || 'Deployment Failed' }}*\n\n*Environment:* ${{ needs.setup.outputs.environment }}\n*URL:* ${{ needs.setup.outputs.url }}\n*Branch:* ${{ github.ref_name }}\n*Commit:* `${{ github.sha }}`"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ vars.SLACK_WEBHOOK_URL }}
+
+      - name: Discord notification
+        if: ${{ vars.DISCORD_WEBHOOK_URL }}
+        run: |
+          STATUS="${{ needs.health-check.result == 'success' && 'Success ✅' || 'Failed ❌' }}"
+          curl -H "Content-Type: application/json" \
+            -d "{\"content\": \"**Deployment $STATUS**\\n**Environment:** ${{ needs.setup.outputs.environment }}\\n**URL:** ${{ needs.setup.outputs.url }}\"}" \
+            "${{ vars.DISCORD_WEBHOOK_URL }}"

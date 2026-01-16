@@ -1,0 +1,296 @@
+# monorepo-selective.yml - Monorepo Selective Builds
+# Run jobs only for changed packages with dependency awareness
+# Part of GitHub Actions Premium Pack
+
+name: Monorepo CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Detect which packages changed
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.filter.outputs.changes }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      has_changes: ${{ steps.filter.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            shared:
+              - 'packages/shared/**'
+              - 'packages/common/**'
+              - 'libs/**'
+            web:
+              - 'packages/web/**'
+              - 'apps/web/**'
+            api:
+              - 'packages/api/**'
+              - 'apps/api/**'
+            mobile:
+              - 'packages/mobile/**'
+              - 'apps/mobile/**'
+            docs:
+              - 'packages/docs/**'
+              - 'docs/**'
+            config:
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'yarn.lock'
+              - 'package-lock.json'
+              - 'tsconfig.json'
+              - '.github/workflows/**'
+          list-files: json
+
+      - name: Check for any changes
+        id: has_changes
+        run: |
+          CHANGES="${{ steps.filter.outputs.changes }}"
+          if [[ "$CHANGES" == "[]" ]]; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build matrix with dependencies
+        id: matrix
+        run: |
+          CHANGES='${{ steps.filter.outputs.changes }}'
+
+          # Define package dependencies (packages that need to rebuild when deps change)
+          declare -A DEPENDENTS
+          DEPENDENTS["shared"]="web api mobile"
+          DEPENDENTS["common"]="web api mobile"
+          DEPENDENTS["config"]="shared web api mobile docs"
+
+          # Start with directly changed packages
+          PACKAGES=$(echo "$CHANGES" | jq -r '.[]' | tr '\n' ' ')
+
+          # Add dependents for changed packages
+          for pkg in $PACKAGES; do
+            if [[ -n "${DEPENDENTS[$pkg]}" ]]; then
+              for dep in ${DEPENDENTS[$pkg]}; do
+                if ! echo "$PACKAGES" | grep -q "$dep"; then
+                  PACKAGES="$PACKAGES $dep"
+                fi
+              done
+            fi
+          done
+
+          # Convert to JSON array for matrix
+          MATRIX=$(echo "$PACKAGES" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -s -c '{package: .}')
+
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          echo "Packages to build: $PACKAGES"
+          echo "Matrix: $MATRIX"
+
+  # Lint affected packages
+  lint:
+    name: Lint ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.has_changes == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.changes.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - name: Get pnpm store
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint ${{ matrix.package }}
+        run: pnpm --filter ${{ matrix.package }} lint
+
+  # Test affected packages
+  test:
+    name: Test ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+    if: needs.changes.outputs.has_changes == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.changes.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - name: Get pnpm store
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test ${{ matrix.package }}
+        run: pnpm --filter ${{ matrix.package }} test
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: ${{ matrix.package }}
+          fail_ci_if_error: false
+
+  # Build affected packages
+  build:
+    name: Build ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    needs: [changes, test]
+    if: needs.changes.outputs.has_changes == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.changes.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - name: Get pnpm store
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build dependencies first
+        run: pnpm --filter ${{ matrix.package }}... build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.package }}
+          path: |
+            packages/${{ matrix.package }}/dist
+            apps/${{ matrix.package }}/.next
+            apps/${{ matrix.package }}/dist
+          retention-days: 7
+
+  # Deploy changed packages
+  deploy:
+    name: Deploy ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    needs: [changes, build]
+    if: github.ref == 'refs/heads/main' && needs.changes.outputs.has_changes == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.changes.outputs.matrix) }}
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ matrix.package }}
+          path: build/
+
+      - name: Deploy ${{ matrix.package }}
+        run: |
+          echo "Deploying ${{ matrix.package }}..."
+          # Add your deployment logic per package here
+          case "${{ matrix.package }}" in
+            web)
+              echo "Deploying web app to Vercel..."
+              ;;
+            api)
+              echo "Deploying API to Cloud Run..."
+              ;;
+            docs)
+              echo "Deploying docs to GitHub Pages..."
+              ;;
+            *)
+              echo "No deployment configured for ${{ matrix.package }}"
+              ;;
+          esac
+
+  # Final status check
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [changes, lint, test, build]
+    if: always()
+    steps:
+      - name: Check status
+        run: |
+          if [[ "${{ needs.changes.outputs.has_changes }}" == "false" ]]; then
+            echo "No changes detected - skipping CI"
+            exit 0
+          fi
+
+          if [[ "${{ needs.lint.result }}" != "success" ]] || \
+             [[ "${{ needs.test.result }}" != "success" ]] || \
+             [[ "${{ needs.build.result }}" != "success" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+
+          echo "All jobs passed!"

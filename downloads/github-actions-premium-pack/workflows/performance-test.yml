@@ -1,0 +1,388 @@
+# performance-test.yml - Load Testing Integration
+# Run load tests with k6, Artillery, or Lighthouse
+# Part of GitHub Actions Premium Pack
+
+name: Performance Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run daily at 2am UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of test to run'
+        required: true
+        type: choice
+        options:
+          - load
+          - stress
+          - soak
+          - spike
+      duration:
+        description: 'Test duration (e.g., 30s, 5m, 1h)'
+        required: false
+        default: '1m'
+      vus:
+        description: 'Number of virtual users'
+        required: false
+        default: '10'
+
+env:
+  TARGET_URL: ${{ vars.PERFORMANCE_TEST_URL || 'https://staging.example.com' }}
+
+jobs:
+  # Lighthouse performance audit for web apps
+  lighthouse:
+    name: Lighthouse Audit
+    runs-on: ubuntu-latest
+    if: vars.RUN_LIGHTHOUSE != 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Lighthouse
+        uses: treosh/lighthouse-ci-action@v11
+        with:
+          urls: |
+            ${{ env.TARGET_URL }}
+            ${{ env.TARGET_URL }}/about
+            ${{ env.TARGET_URL }}/products
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+          configPath: ./.lighthouserc.json
+          budgetPath: ./budget.json
+
+      - name: Check Lighthouse thresholds
+        run: |
+          # Parse results and check against thresholds
+          PERF=$(cat .lighthouseci/*.json | jq -r '.categories.performance.score * 100')
+          ACCESS=$(cat .lighthouseci/*.json | jq -r '.categories.accessibility.score * 100')
+          BEST=$(cat .lighthouseci/*.json | jq -r '.categories["best-practices"].score * 100')
+          SEO=$(cat .lighthouseci/*.json | jq -r '.categories.seo.score * 100')
+
+          echo "## Lighthouse Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Score |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Performance | $PERF |" >> $GITHUB_STEP_SUMMARY
+          echo "| Accessibility | $ACCESS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Best Practices | $BEST |" >> $GITHUB_STEP_SUMMARY
+          echo "| SEO | $SEO |" >> $GITHUB_STEP_SUMMARY
+
+          # Fail if performance drops below threshold
+          if (( $(echo "$PERF < 70" | bc -l) )); then
+            echo "::error::Performance score $PERF is below threshold (70)"
+            exit 1
+          fi
+
+  # k6 load testing
+  k6-load-test:
+    name: k6 Load Test
+    runs-on: ubuntu-latest
+    if: hashFiles('k6/**') != '' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create default k6 script
+        if: hashFiles('k6/**') == ''
+        run: |
+          mkdir -p k6
+          cat > k6/load-test.js << 'EOF'
+          import http from 'k6/http';
+          import { check, sleep } from 'k6';
+          import { Rate, Trend } from 'k6/metrics';
+
+          const errorRate = new Rate('errors');
+          const responseTrend = new Trend('response_time');
+
+          export const options = {
+            scenarios: {
+              load: {
+                executor: 'ramping-vus',
+                startVUs: 0,
+                stages: [
+                  { duration: '30s', target: __ENV.VUS || 10 },
+                  { duration: __ENV.DURATION || '1m', target: __ENV.VUS || 10 },
+                  { duration: '30s', target: 0 },
+                ],
+              },
+              stress: {
+                executor: 'ramping-vus',
+                startVUs: 0,
+                stages: [
+                  { duration: '2m', target: 50 },
+                  { duration: '5m', target: 50 },
+                  { duration: '2m', target: 100 },
+                  { duration: '5m', target: 100 },
+                  { duration: '2m', target: 0 },
+                ],
+              },
+              spike: {
+                executor: 'ramping-vus',
+                startVUs: 0,
+                stages: [
+                  { duration: '10s', target: 100 },
+                  { duration: '1m', target: 100 },
+                  { duration: '10s', target: 0 },
+                ],
+              },
+            },
+            thresholds: {
+              http_req_duration: ['p(95)<500', 'p(99)<1000'],
+              errors: ['rate<0.1'],
+              http_req_failed: ['rate<0.01'],
+            },
+          };
+
+          const BASE_URL = __ENV.TARGET_URL || 'https://test.k6.io';
+
+          export default function () {
+            const endpoints = [
+              '/',
+              '/api/health',
+              '/api/v1/products',
+            ];
+
+            const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
+            const res = http.get(`${BASE_URL}${endpoint}`);
+
+            const success = check(res, {
+              'status is 200': (r) => r.status === 200,
+              'response time < 500ms': (r) => r.timings.duration < 500,
+            });
+
+            errorRate.add(!success);
+            responseTrend.add(res.timings.duration);
+
+            sleep(Math.random() * 2 + 1);
+          }
+
+          export function handleSummary(data) {
+            return {
+              'stdout': textSummary(data, { indent: ' ', enableColors: true }),
+              'k6-summary.json': JSON.stringify(data),
+            };
+          }
+          EOF
+
+      - name: Run k6 load test
+        uses: grafana/k6-action@v0.3.1
+        with:
+          filename: k6/load-test.js
+          flags: --out json=k6-results.json
+        env:
+          TARGET_URL: ${{ env.TARGET_URL }}
+          VUS: ${{ github.event.inputs.vus || '10' }}
+          DURATION: ${{ github.event.inputs.duration || '1m' }}
+          K6_SCENARIO: ${{ github.event.inputs.test_type || 'load' }}
+
+      - name: Upload k6 results
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-results
+          path: |
+            k6-results.json
+            k6-summary.json
+
+      - name: Parse and report results
+        run: |
+          echo "## k6 Load Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ -f k6-summary.json ]]; then
+            REQS=$(jq -r '.metrics.http_reqs.values.count' k6-summary.json)
+            P95=$(jq -r '.metrics.http_req_duration.values["p(95)"]' k6-summary.json)
+            P99=$(jq -r '.metrics.http_req_duration.values["p(99)"]' k6-summary.json)
+            FAILED=$(jq -r '.metrics.http_req_failed.values.rate' k6-summary.json)
+
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Total Requests | $REQS |" >> $GITHUB_STEP_SUMMARY
+            echo "| p95 Response Time | ${P95}ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| p99 Response Time | ${P99}ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| Failed Requests | ${FAILED}% |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Artillery load testing (alternative to k6)
+  artillery:
+    name: Artillery Test
+    runs-on: ubuntu-latest
+    if: hashFiles('artillery/**') != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Artillery
+        run: npm install -g artillery
+
+      - name: Run Artillery test
+        run: |
+          artillery run artillery/load-test.yml \
+            --output artillery-report.json \
+            --target ${{ env.TARGET_URL }}
+
+      - name: Generate HTML report
+        run: artillery report artillery-report.json --output artillery-report.html
+
+      - name: Upload Artillery results
+        uses: actions/upload-artifact@v4
+        with:
+          name: artillery-results
+          path: |
+            artillery-report.json
+            artillery-report.html
+
+  # Web Vitals check
+  web-vitals:
+    name: Web Vitals
+    runs-on: ubuntu-latest
+    if: vars.RUN_WEB_VITALS != 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: npx playwright install chromium --with-deps
+
+      - name: Measure Core Web Vitals
+        run: |
+          cat > measure-vitals.js << 'EOF'
+          const { chromium } = require('playwright');
+
+          async function measureWebVitals(url) {
+            const browser = await chromium.launch();
+            const page = await browser.newPage();
+
+            const vitals = {};
+
+            page.on('console', (msg) => {
+              if (msg.text().startsWith('web-vital:')) {
+                const [, name, value] = msg.text().split(':');
+                vitals[name] = parseFloat(value);
+              }
+            });
+
+            await page.addInitScript(() => {
+              const reportVital = (name, value) => {
+                console.log(`web-vital:${name}:${value}`);
+              };
+
+              new PerformanceObserver((list) => {
+                for (const entry of list.getEntries()) {
+                  if (entry.name === 'first-contentful-paint') {
+                    reportVital('FCP', entry.startTime);
+                  }
+                }
+              }).observe({ entryTypes: ['paint'] });
+
+              new PerformanceObserver((list) => {
+                const entry = list.getEntries().at(-1);
+                reportVital('LCP', entry.startTime);
+              }).observe({ type: 'largest-contentful-paint', buffered: true });
+
+              new PerformanceObserver((list) => {
+                let cls = 0;
+                for (const entry of list.getEntries()) {
+                  if (!entry.hadRecentInput) {
+                    cls += entry.value;
+                  }
+                }
+                reportVital('CLS', cls);
+              }).observe({ type: 'layout-shift', buffered: true });
+            });
+
+            await page.goto(url, { waitUntil: 'networkidle' });
+            await page.waitForTimeout(3000);
+
+            await browser.close();
+
+            return vitals;
+          }
+
+          (async () => {
+            const url = process.env.TARGET_URL || 'https://example.com';
+            const vitals = await measureWebVitals(url);
+            console.log(JSON.stringify(vitals, null, 2));
+
+            // Write to file for parsing
+            require('fs').writeFileSync('web-vitals.json', JSON.stringify(vitals));
+          })();
+          EOF
+
+          node measure-vitals.js
+        env:
+          TARGET_URL: ${{ env.TARGET_URL }}
+
+      - name: Report Web Vitals
+        run: |
+          echo "## Core Web Vitals" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ -f web-vitals.json ]]; then
+            FCP=$(jq -r '.FCP // "N/A"' web-vitals.json)
+            LCP=$(jq -r '.LCP // "N/A"' web-vitals.json)
+            CLS=$(jq -r '.CLS // "N/A"' web-vitals.json)
+
+            echo "| Metric | Value | Target |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+            echo "| FCP | ${FCP}ms | < 1800ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| LCP | ${LCP}ms | < 2500ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| CLS | ${CLS} | < 0.1 |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Performance regression detection
+  compare:
+    name: Compare to Baseline
+    runs-on: ubuntu-latest
+    needs: [lighthouse, k6-load-test]
+    if: always() && github.event_name == 'pull_request'
+    steps:
+      - name: Download current results
+        uses: actions/download-artifact@v4
+        with:
+          name: k6-results
+          path: current/
+
+      - name: Compare with baseline
+        run: |
+          echo "## Performance Comparison" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Comparing PR performance against main branch baseline..." >> $GITHUB_STEP_SUMMARY
+          # Add your baseline comparison logic here
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let body = '## Performance Test Results\n\n';
+            body += '| Metric | Value |\n';
+            body += '|--------|-------|\n';
+
+            if (fs.existsSync('current/k6-summary.json')) {
+              const data = JSON.parse(fs.readFileSync('current/k6-summary.json'));
+              const p95 = data.metrics?.http_req_duration?.values?.['p(95)'] || 'N/A';
+              const reqs = data.metrics?.http_reqs?.values?.count || 'N/A';
+              body += `| p95 Response Time | ${p95}ms |\n`;
+              body += `| Total Requests | ${reqs} |\n`;
+            }
+
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });

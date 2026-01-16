@@ -1030,8 +1030,8 @@ def init_postgres_schema():
             pass
 
 
-# Initialize database schema on startup
-init_postgres_schema()
+# Schema initialization is now handled by orchestrator_pg.py
+# init_postgres_schema() - disabled to avoid UUID/TEXT type conflicts
 
 
 @app.get("/api/tasks")
