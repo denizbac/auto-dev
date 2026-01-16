@@ -8,7 +8,6 @@ Provides the agent runner and memory systems for the autonomous agents.
 from .memory import (
     ShortTermMemory,
     LongTermMemory,
-    IncomeEntry,
     ShortTermMemoryDB,
     LongTermMemoryDB,
     create_memory_systems
@@ -29,7 +28,6 @@ WatcherState = AgentState
 __all__ = [
     'ShortTermMemory',
     'LongTermMemory',
-    'IncomeEntry',
     'ShortTermMemoryDB',
     'LongTermMemoryDB',
     'create_memory_systems',
