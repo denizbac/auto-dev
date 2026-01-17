@@ -1221,6 +1221,7 @@ async def get_agent_tasks(agent: str = None, status: str = None, limit: int = 10
 @app.get("/repos")
 @app.get("/tasks")
 @app.get("/approvals")
+@app.get("/learnings")
 @app.get("/settings")
 @app.get("/projects")
 async def react_routes():
@@ -1344,6 +1345,215 @@ async def get_outcome_stats(repo_id: str = None, days: int = 30):
         }
     except Exception as e:
         return {"by_agent": [], "by_task_type": [], "recent_failures": [], "period_days": days, "error": str(e)}
+    finally:
+        conn.close()
+
+
+# ==================== Reflections API ====================
+
+@app.get("/api/reflections")
+async def get_reflections(
+    agent_type: str = None,
+    task_type: str = None,
+    repo_id: str = None,
+    limit: int = 50
+):
+    """Get agent reflections."""
+    conn = get_orchestrator_db()
+    if not conn:
+        return {'reflections': []}
+
+    try:
+        conditions = []
+        params = []
+
+        if agent_type:
+            conditions.append("agent_type = %s")
+            params.append(agent_type)
+        if task_type:
+            conditions.append("reflection_type = %s")
+            params.append(task_type)
+        if repo_id:
+            conditions.append("repo_id = %s")
+            params.append(repo_id)
+
+        where = " AND ".join(conditions) if conditions else "1=1"
+
+        cursor = conn.execute(f"""
+            SELECT id, agent_type, task_id, reflection_type,
+                   content, confidence, tags, created_at
+            FROM reflections
+            WHERE {where}
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, params + [limit])
+
+        reflections = []
+        for row in cursor.fetchall():
+            row_dict = dict(row)
+            reflections.append({
+                'id': str(row_dict['id']),
+                'agent_id': row_dict['agent_type'],
+                'task_id': str(row_dict['task_id']) if row_dict['task_id'] else None,
+                'reflection_type': row_dict['reflection_type'],
+                'summary': row_dict['content'],
+                'confidence': row_dict['confidence'],
+                'tags': row_dict.get('tags') or [],
+                'created_at': row_dict['created_at'].isoformat() if hasattr(row_dict['created_at'], 'isoformat') else str(row_dict['created_at'])
+            })
+
+        return {'reflections': reflections}
+    except Exception as e:
+        return {'reflections': [], 'error': str(e)}
+    finally:
+        conn.close()
+
+
+@app.get("/api/reflections/stats")
+async def get_reflection_stats(days: int = 30):
+    """Get reflection statistics."""
+    conn = get_orchestrator_db()
+    if not conn:
+        return {'by_agent': [], 'by_type': [], 'period_days': days}
+
+    try:
+        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+        # Count by agent
+        cursor = conn.execute("""
+            SELECT agent_type, COUNT(*), AVG(confidence)
+            FROM reflections
+            WHERE created_at > %s
+            GROUP BY agent_type
+        """, [cutoff])
+
+        by_agent = [
+            {'agent_id': r[0], 'count': r[1], 'avg_confidence': float(r[2] or 0)}
+            for r in cursor.fetchall()
+        ]
+
+        # Count by type
+        cursor = conn.execute("""
+            SELECT reflection_type, COUNT(*)
+            FROM reflections
+            WHERE created_at > %s
+            GROUP BY reflection_type
+        """, [cutoff])
+
+        by_type = [
+            {'type': r[0], 'count': r[1]}
+            for r in cursor.fetchall()
+        ]
+
+        return {'by_agent': by_agent, 'by_type': by_type, 'period_days': days}
+    except Exception as e:
+        return {'by_agent': [], 'by_type': [], 'period_days': days, 'error': str(e)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/reflections")
+async def create_reflection(request: Request):
+    """Record a new reflection (called by agents)."""
+    data = await request.json()
+    conn = get_orchestrator_db()
+    if not conn:
+        return {'error': 'Database unavailable'}
+
+    try:
+        cursor = conn.execute("""
+            INSERT INTO reflections
+            (agent_type, task_id, reflection_type, content, confidence, tags)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            data['agent_id'],
+            data.get('task_id'),
+            data['reflection_type'],
+            data['summary'],
+            data.get('confidence', 0.5),
+            data.get('tags', [])
+        ))
+
+        result = cursor.fetchone()
+        reflection_id = str(result[0]) if result else None
+        conn.commit()
+
+        # Auto-extract learning if high confidence
+        if data.get('confidence', 0) >= 0.7 and data.get('learning_content'):
+            conn.execute("""
+                INSERT INTO learnings
+                (agent_type, category, insight, confidence)
+                VALUES (%s, %s, %s, %s)
+            """, (
+                data['agent_id'],
+                data.get('category', 'general'),
+                data['learning_content'],
+                data.get('confidence', 0.5)
+            ))
+            conn.commit()
+
+        return {'id': reflection_id, 'status': 'created'}
+    except Exception as e:
+        return {'error': str(e)}
+    finally:
+        conn.close()
+
+
+# ==================== Learnings API ====================
+
+@app.get("/api/learnings")
+async def get_learnings(
+    agent_type: str = None,
+    category: str = None,
+    validated_only: bool = False,
+    limit: int = 50
+):
+    """Get validated learnings."""
+    conn = get_orchestrator_db()
+    if not conn:
+        return {'learnings': []}
+
+    try:
+        conditions = ["active = true"]
+        params = []
+
+        if agent_type:
+            conditions.append("agent_type = %s")
+            params.append(agent_type)
+        if category:
+            conditions.append("category = %s")
+            params.append(category)
+        if validated_only:
+            conditions.append("usage_count > 0")
+
+        where = " AND ".join(conditions)
+
+        cursor = conn.execute(f"""
+            SELECT id, agent_type, category, insight,
+                   confidence, usage_count, created_at
+            FROM learnings
+            WHERE {where}
+            ORDER BY usage_count DESC, created_at DESC
+            LIMIT %s
+        """, params + [limit])
+
+        learnings = []
+        for row in cursor.fetchall():
+            row_dict = dict(row)
+            learnings.append({
+                'id': str(row_dict['id']),
+                'agent_id': row_dict['agent_type'],
+                'category': row_dict['category'],
+                'content': row_dict['insight'],
+                'confidence': row_dict['confidence'],
+                'validation_count': row_dict['usage_count'],
+                'created_at': row_dict['created_at'].isoformat() if hasattr(row_dict['created_at'], 'isoformat') else str(row_dict['created_at'])
+            })
+
+        return {'learnings': learnings}
+    except Exception as e:
+        return {'learnings': [], 'error': str(e)}
     finally:
         conn.close()
 

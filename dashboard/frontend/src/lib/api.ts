@@ -404,3 +404,107 @@ export interface PendingApprovalsResponse {
     total: number
   }
 }
+
+// Task Outcomes (Learnings)
+export interface TaskOutcome {
+  id: string
+  task_id: string
+  repo_id: string
+  agent_id: string
+  task_type: string
+  outcome: 'success' | 'failure' | 'partial'
+  duration_seconds: number | null
+  error_summary: string | null
+  context_summary: string | null
+  created_at: string
+}
+
+export interface OutcomeAgentStats {
+  agent_id: string
+  total: number
+  success: number
+  failure: number
+  rate: number
+}
+
+export interface OutcomeTypeStats {
+  task_type: string
+  total: number
+  success: number
+  failure: number
+  rate: number
+}
+
+export interface RecentFailure {
+  agent_id: string
+  task_type: string
+  error_summary: string | null
+  created_at: string
+}
+
+export interface OutcomeStats {
+  by_agent: OutcomeAgentStats[]
+  by_task_type: OutcomeTypeStats[]
+  recent_failures: RecentFailure[]
+  period_days: number
+}
+
+export interface OutcomesResponse {
+  outcomes: TaskOutcome[]
+}
+
+export const getOutcomes = (limit = 50) =>
+  fetchAPI<OutcomesResponse>(`/outcomes?limit=${limit}`)
+
+export const getOutcomeStats = (days = 30) =>
+  fetchAPI<OutcomeStats>(`/outcomes/stats?days=${days}`)
+
+// ==================== Reflections ====================
+
+export interface Reflection {
+  id: string
+  agent_id: string
+  task_id: string | null
+  reflection_type: string
+  summary: string
+  confidence: number
+  tags: string[]
+  created_at: string
+}
+
+export interface ReflectionStats {
+  by_agent: Array<{ agent_id: string; count: number; avg_confidence: number }>
+  by_type: Array<{ type: string; count: number }>
+  period_days: number
+}
+
+export interface ReflectionsResponse {
+  reflections: Reflection[]
+}
+
+export const getReflections = (limit = 50) =>
+  fetchAPI<ReflectionsResponse>(`/reflections?limit=${limit}`)
+
+export const getReflectionStats = (days = 30) =>
+  fetchAPI<ReflectionStats>(`/reflections/stats?days=${days}`)
+
+// ==================== Learnings ====================
+
+export interface Learning {
+  id: string
+  agent_id: string
+  category: string
+  content: string
+  confidence: number
+  validation_count: number
+  created_at: string
+}
+
+export interface LearningsResponse {
+  learnings: Learning[]
+}
+
+export const getLearnings = (validatedOnly = false, limit = 50) =>
+  fetchAPI<LearningsResponse>(
+    `/learnings?validated_only=${validatedOnly}&limit=${limit}`
+  )

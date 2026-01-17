@@ -1,5 +1,16 @@
 """
-Agent Reflection and Learning Framework
+DEPRECATED: This module is not used.
+
+Reflection and learning functionality has been moved to:
+- dashboard/server.py: API endpoints for reflections and learnings
+- watcher/agent_runner.py: LLM-powered reflection generation after task completion
+
+The new system uses PostgreSQL (not SQLite) and integrates with the dashboard.
+
+This file is kept for reference only and will be removed in a future cleanup.
+================================================================================
+
+Agent Reflection and Learning Framework (LEGACY)
 
 Enables agents to:
 1. Reflect on completed tasks (successes/failures)

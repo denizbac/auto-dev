@@ -391,6 +391,57 @@ tail -f logs/pm.log                 # View logs
 
 ---
 
+## Learning System
+
+The learning system captures agent insights and makes them available for future tasks through an LLM-powered reflection loop.
+
+### Data Flow
+
+```
+Task Completes (agent_runner.py)
+        │
+        ├──► record_outcome()      ──► task_outcomes table (metrics)
+        │
+        └──► _record_llm_reflection()
+                    │
+                    ├──► LLM generates reflection (gpt-4o-mini)
+                    │
+                    └──► POST /api/reflections ──► reflections table
+                                                        │
+                                                        └──► learnings table (if confidence ≥ 0.7)
+```
+
+### Database Tables
+
+| Table | Purpose | Key Fields |
+|-------|---------|------------|
+| `task_outcomes` | Raw success/failure metrics per task | agent_id, task_type, outcome, duration |
+| `reflections` | LLM-generated observations after task completion | agent_type, reflection_type, content, confidence |
+| `learnings` | Validated patterns extracted from high-confidence reflections | agent_type, category, insight, usage_count |
+
+### API Endpoints
+
+- `GET /api/reflections` - List agent reflections
+- `GET /api/reflections/stats` - Aggregate reflection statistics
+- `POST /api/reflections` - Record new reflection (called by agents)
+- `GET /api/learnings` - List validated learnings
+
+### Dashboard
+
+The Learnings page (`/learnings`) displays:
+- Performance metrics by agent and task type
+- Recent LLM-generated reflections with confidence scores
+- Validated learnings that inform future work
+
+### Configuration
+
+Set `DASHBOARD_URL` environment variable for agents to POST reflections:
+```bash
+DASHBOARD_URL=http://dashboard.autodev.local:8080  # Default
+```
+
+---
+
 ## Infrastructure (Terraform)
 
 ```

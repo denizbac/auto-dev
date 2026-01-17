@@ -790,9 +790,85 @@ If this task should be handed off to another agent, indicate that clearly with t
                 except Exception as e:
                     logger.warning(f"Failed to record outcome: {e}")
 
+                # Generate LLM-powered reflection for learning system
+                try:
+                    self._record_llm_reflection(task, success, output, exit_code)
+                except Exception as e:
+                    logger.debug(f"Could not record reflection: {e}")
+
         # Update status
         self.orchestrator.update_agent_status(self.agent_id, 'idle')
-    
+
+    def _record_llm_reflection(self, task, success: bool, output: str, exit_code: int) -> None:
+        """Generate an LLM-powered reflection and record it."""
+        import requests
+
+        # Get API key
+        openai_key = (
+            os.environ.get("OPENAI_API_KEY") or
+            os.environ.get("CODEX_API_KEY") or
+            _load_ssm_param(OPENAI_SSM_PARAM)
+        )
+        if not openai_key:
+            logger.debug("No OpenAI key available for reflection generation")
+            return
+
+        instruction = task.payload.get('instruction', '') if isinstance(task.payload, dict) else ''
+        output_excerpt = output[-2000:] if output else ''  # Last 2000 chars
+
+        # Generate reflection using LLM
+        reflection_prompt = f"""You are an AI agent that just completed a task. Reflect on what you learned.
+
+Task Type: {task.type}
+Instruction: {instruction}
+Outcome: {'SUCCESS' if success else f'FAILURE (exit code {exit_code})'}
+Output excerpt: {output_excerpt[:500]}
+
+Provide a brief reflection (2-3 sentences) about:
+1. What you learned from this task
+2. What could be improved or done differently
+3. Any patterns or insights that could help future similar tasks
+
+Format your response as a single paragraph. Be specific and actionable."""
+
+        try:
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openai_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "gpt-4o-mini",  # Fast and cheap for reflections
+                    "messages": [{"role": "user", "content": reflection_prompt}],
+                    "max_tokens": 200,
+                    "temperature": 0.7
+                },
+                timeout=10
+            )
+            response.raise_for_status()
+            reflection_text = response.json()['choices'][0]['message']['content'].strip()
+        except Exception as e:
+            logger.debug(f"LLM reflection generation failed: {e}")
+            # Fall back to simple reflection
+            reflection_text = f"{'Completed' if success else 'Failed'} {task.type}: {instruction[:100]}"
+
+        # Post to dashboard API
+        dashboard_url = os.environ.get('DASHBOARD_URL', 'http://dashboard.autodev.local:8080')
+        reflection_data = {
+            'agent_id': self.agent_id,
+            'task_id': str(task.id),
+            'reflection_type': 'TASK_COMPLETION' if success else 'ERROR_ANALYSIS',
+            'summary': reflection_text,
+            'confidence': 0.8 if success else 0.5,
+            'tags': [task.type, 'success' if success else 'failure', 'llm_generated'],
+            'learning_content': reflection_text if success else None,
+            'category': 'task_execution'
+        }
+
+        requests.post(f"{dashboard_url}/api/reflections", json=reflection_data, timeout=5)
+        logger.info(f"Recorded LLM reflection for task {task.id}")
+
     def _check_rate_limit(self, provider: Optional[str] = None) -> Optional[datetime]:
         """
         Check if we're rate limited by checking shared file.

@@ -5,6 +5,7 @@ import {
   GitBranch,
   ListTodo,
   CheckCircle,
+  Brain,
   Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -15,6 +16,7 @@ const navigation = [
   { name: 'Repositories', href: '/repos', icon: GitBranch },
   { name: 'Tasks', href: '/tasks', icon: ListTodo },
   { name: 'Approvals', href: '/approvals', icon: CheckCircle },
+  { name: 'Learnings', href: '/learnings', icon: Brain },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]
 
