@@ -14,9 +14,10 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict
 import logging
 
-from qdrant_client import QdrantClient
-from qdrant_client.http import models
-from sentence_transformers import SentenceTransformer
+# Lazy imports for long-term memory (heavy ML dependencies)
+# These are only loaded when LongTermMemoryDB is instantiated
+QdrantClient = None
+SentenceTransformer = None
 
 logger = logging.getLogger(__name__)
 
@@ -229,13 +230,19 @@ class LongTermMemoryDB:
                  embedding_model: str = "all-MiniLM-L6-v2"):
         """
         Initialize long-term memory with Qdrant.
-        
+
         Args:
             host: Qdrant server host
             port: Qdrant server port
             collection_name: Name of the vector collection
             embedding_model: Sentence transformer model for embeddings
         """
+        # Lazy import heavy ML dependencies
+        from qdrant_client import QdrantClient
+        from qdrant_client.http import models
+        from sentence_transformers import SentenceTransformer
+
+        self.models = models  # Store for later use
         self.client = QdrantClient(host=host, port=port)
         self.collection_name = collection_name
         self.encoder = SentenceTransformer(embedding_model)
@@ -248,9 +255,9 @@ class LongTermMemoryDB:
         if not any(c.name == self.collection_name for c in collections):
             self.client.create_collection(
                 collection_name=self.collection_name,
-                vectors_config=models.VectorParams(
+                vectors_config=self.models.VectorParams(
                     size=self.vector_size,
-                    distance=models.Distance.COSINE
+                    distance=self.models.Distance.COSINE
                 )
             )
             logger.info(f"Created collection: {self.collection_name}")
@@ -275,7 +282,7 @@ class LongTermMemoryDB:
         self.client.upsert(
             collection_name=self.collection_name,
             points=[
-                models.PointStruct(
+                self.models.PointStruct(
                     id=memory_id,
                     vector=embedding,
                     payload={
@@ -315,20 +322,20 @@ class LongTermMemoryDB:
         must_conditions = []
         if min_importance > 0:
             must_conditions.append(
-                models.FieldCondition(
+                self.models.FieldCondition(
                     key="importance",
-                    range=models.Range(gte=min_importance)
+                    range=self.models.Range(gte=min_importance)
                 )
             )
         if type_filter:
             must_conditions.append(
-                models.FieldCondition(
+                self.models.FieldCondition(
                     key="type",
-                    match=models.MatchValue(value=type_filter)
+                    match=self.models.MatchValue(value=type_filter)
                 )
             )
         
-        query_filter = models.Filter(must=must_conditions) if must_conditions else None
+        query_filter = self.models.Filter(must=must_conditions) if must_conditions else None
         
         # Search
         results = self.client.search(
@@ -355,11 +362,11 @@ class LongTermMemoryDB:
         """Get memories by tags."""
         results = self.client.scroll(
             collection_name=self.collection_name,
-            scroll_filter=models.Filter(
+            scroll_filter=self.models.Filter(
                 should=[
-                    models.FieldCondition(
+                    self.models.FieldCondition(
                         key="tags",
-                        match=models.MatchValue(value=tag)
+                        match=self.models.MatchValue(value=tag)
                     )
                     for tag in tags
                 ]
@@ -384,16 +391,16 @@ class LongTermMemoryDB:
         """Get top income-generating strategies."""
         results = self.client.scroll(
             collection_name=self.collection_name,
-            scroll_filter=models.Filter(
+            scroll_filter=self.models.Filter(
                 must=[
-                    models.FieldCondition(
+                    self.models.FieldCondition(
                         key="type",
-                        match=models.MatchValue(value="strategy")
+                        match=self.models.MatchValue(value="strategy")
                     )
                 ]
             ),
             limit=limit,
-            order_by=models.OrderBy(
+            order_by=self.models.OrderBy(
                 key="income_potential",
                 direction="desc"
             )
@@ -421,7 +428,7 @@ class LongTermMemoryDB:
         """Delete a memory by ID."""
         self.client.delete(
             collection_name=self.collection_name,
-            points_selector=models.PointIdsList(points=[memory_id])
+            points_selector=self.models.PointIdsList(points=[memory_id])
         )
 
 

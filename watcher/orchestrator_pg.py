@@ -166,6 +166,7 @@ class Repo:
     gitlab_url: str
     gitlab_project_id: str
     slug: str  # URL-safe identifier
+    provider: str = "gitlab"  # 'gitlab' or 'github'
     default_branch: str = "main"
     autonomy_mode: str = "guided"  # 'guided' or 'full'
     settings: Dict[str, Any] = field(default_factory=dict)
@@ -615,7 +616,8 @@ class MultiTenantOrchestrator:
         default_branch: str = "main",
         autonomy_mode: str = "guided",
         settings: Dict[str, Any] = None,
-        repo_id: str = None
+        repo_id: str = None,
+        provider: str = "gitlab"
     ) -> Repo:
         """Create a new managed repository."""
         # Generate slug from name
@@ -627,6 +629,7 @@ class MultiTenantOrchestrator:
             gitlab_url=gitlab_url,
             gitlab_project_id=gitlab_project_id,
             slug=slug,
+            provider=provider,
             default_branch=default_branch,
             autonomy_mode=autonomy_mode,
             settings=settings or {}
@@ -637,17 +640,17 @@ class MultiTenantOrchestrator:
             p = self.db.placeholder
             cursor.execute(f"""
                 INSERT INTO repos
-                (id, name, gitlab_url, gitlab_project_id, slug, default_branch,
+                (id, name, gitlab_url, gitlab_project_id, slug, provider, default_branch,
                  autonomy_mode, settings, status, created_at, updated_at)
-                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
             """, (
                 repo.id, repo.name, repo.gitlab_url, repo.gitlab_project_id,
-                repo.slug, repo.default_branch, repo.autonomy_mode,
+                repo.slug, repo.provider, repo.default_branch, repo.autonomy_mode,
                 json.dumps(repo.settings), repo.status, repo.created_at, repo.updated_at
             ))
             conn.commit()
 
-        logger.info(f"Created repo: {repo.name} ({repo.id})")
+        logger.info(f"Created repo: {repo.name} ({repo.id}) [provider: {provider}]")
         return repo
 
     def get_repo(self, repo_id: str) -> Optional[Repo]:

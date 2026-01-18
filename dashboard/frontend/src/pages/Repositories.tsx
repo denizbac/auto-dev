@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, GitBranch, Send, ExternalLink } from 'lucide-react'
+import { Plus, GitBranch, Send, ExternalLink, Github } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -40,7 +40,8 @@ export default function Repositories() {
 
   // Form state for adding repo
   const [newRepoName, setNewRepoName] = useState('')
-  const [newRepoUrl, setNewRepoUrl] = useState('')
+  const [newRepoProvider, setNewRepoProvider] = useState<'gitlab' | 'github'>('github')
+  const [newRepoUrl, setNewRepoUrl] = useState('https://github.com')
   const [newRepoProjectId, setNewRepoProjectId] = useState('')
   const [newRepoAutonomy, setNewRepoAutonomy] = useState<'guided' | 'full'>('guided')
 
@@ -66,14 +67,21 @@ export default function Repositories() {
 
   const resetForm = () => {
     setNewRepoName('')
-    setNewRepoUrl('')
+    setNewRepoProvider('github')
+    setNewRepoUrl('https://github.com')
     setNewRepoProjectId('')
     setNewRepoAutonomy('guided')
+  }
+
+  const handleProviderChange = (provider: 'gitlab' | 'github') => {
+    setNewRepoProvider(provider)
+    setNewRepoUrl(provider === 'github' ? 'https://github.com' : 'https://gitlab.com')
   }
 
   const handleAddRepo = () => {
     createRepoMutation.mutate({
       name: newRepoName,
+      provider: newRepoProvider,
       gitlab_url: newRepoUrl,
       gitlab_project_id: newRepoProjectId,
       autonomy_mode: newRepoAutonomy,
@@ -103,7 +111,7 @@ export default function Repositories() {
         <div>
           <h2 className="text-lg font-semibold">Repositories</h2>
           <p className="text-sm text-muted-foreground">
-            Manage GitLab repositories and send targeted instructions
+            Manage GitHub and GitLab repositories and send targeted instructions
           </p>
         </div>
         <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
@@ -117,10 +125,22 @@ export default function Repositories() {
             <DialogHeader>
               <DialogTitle>Add Repository</DialogTitle>
               <DialogDescription>
-                Connect a GitLab repository for Auto-Dev to work on.
+                Connect a GitHub or GitLab repository for Auto-Dev to work on.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
+              <div>
+                <label className="text-sm font-medium">Provider</label>
+                <Select value={newRepoProvider} onValueChange={(v) => handleProviderChange(v as 'gitlab' | 'github')}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="github">GitHub</SelectItem>
+                    <SelectItem value="gitlab">GitLab</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div>
                 <label className="text-sm font-medium">Name</label>
                 <Input
@@ -130,17 +150,11 @@ export default function Repositories() {
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">GitLab URL</label>
+                <label className="text-sm font-medium">
+                  {newRepoProvider === 'github' ? 'Owner/Repo' : 'Project ID or Path'}
+                </label>
                 <Input
-                  placeholder="https://gitlab.com/org/repo"
-                  value={newRepoUrl}
-                  onChange={(e) => setNewRepoUrl(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Project ID</label>
-                <Input
-                  placeholder="12345"
+                  placeholder={newRepoProvider === 'github' ? 'owner/repo' : 'group/project or 12345'}
                   value={newRepoProjectId}
                   onChange={(e) => setNewRepoProjectId(e.target.value)}
                 />
@@ -196,13 +210,24 @@ export default function Repositories() {
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
-                      <GitBranch className="h-5 w-5 text-muted-foreground" />
+                      {repo.provider === 'github' ? (
+                        <Github className="h-5 w-5 text-muted-foreground" />
+                      ) : (
+                        <GitBranch className="h-5 w-5 text-muted-foreground" />
+                      )}
                       <div>
                         <h3 className="font-medium">{repo.name}</h3>
-                        <p className="text-sm text-muted-foreground">{repo.gitlab_url}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {repo.provider === 'github'
+                            ? `github.com/${repo.gitlab_project_id}`
+                            : repo.gitlab_url}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="capitalize">
+                        {repo.provider || 'gitlab'}
+                      </Badge>
                       <Badge variant={repo.autonomy_mode === 'full' ? 'success' : 'secondary'}>
                         {repo.autonomy_mode}
                       </Badge>
@@ -215,14 +240,16 @@ export default function Repositories() {
                     <span>Branch: {repo.default_branch}</span>
                     <span>Added: {formatDate(repo.created_at)}</span>
                     <a
-                      href={repo.gitlab_url}
+                      href={repo.provider === 'github'
+                        ? `https://github.com/${repo.gitlab_project_id}`
+                        : `${repo.gitlab_url}/${repo.gitlab_project_id}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1 hover:text-foreground"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <ExternalLink className="h-3 w-3" />
-                      Open in GitLab
+                      Open in {repo.provider === 'github' ? 'GitHub' : 'GitLab'}
                     </a>
                   </div>
                 </CardContent>

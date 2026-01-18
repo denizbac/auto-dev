@@ -202,6 +202,7 @@ export interface Repo {
   id: string
   name: string
   slug: string
+  provider: 'gitlab' | 'github'
   gitlab_url: string
   gitlab_project_id: string
   default_branch: string
@@ -216,6 +217,7 @@ export interface ReposResponse {
 
 export interface CreateRepoRequest {
   name: string
+  provider?: 'gitlab' | 'github'
   gitlab_url: string
   gitlab_project_id: string
   default_branch?: string
