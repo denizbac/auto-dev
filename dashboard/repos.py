@@ -34,8 +34,9 @@ def set_orchestrator(orch):
 class RepoCreate(BaseModel):
     """Create a new repository."""
     name: str = Field(..., min_length=1, max_length=100)
-    gitlab_url: str = Field(..., description="GitLab instance URL")
-    gitlab_project_id: str = Field(..., description="GitLab project ID or path")
+    provider: str = Field(default="gitlab", pattern="^(gitlab|github)$", description="Git provider (gitlab or github)")
+    gitlab_url: str = Field(..., description="Git provider URL (e.g., https://gitlab.com or https://github.com)")
+    gitlab_project_id: str = Field(..., description="Project ID/path (GitLab) or owner/repo (GitHub)")
     default_branch: str = Field(default="main")
     autonomy_mode: str = Field(default="guided", pattern="^(guided|full)$")
     settings: Optional[Dict[str, Any]] = Field(default=None)
@@ -54,6 +55,7 @@ class RepoResponse(BaseModel):
     """Repository response model."""
     id: str
     name: str
+    provider: str = "gitlab"
     gitlab_url: str
     gitlab_project_id: str
     default_branch: str
@@ -105,14 +107,10 @@ async def create_repo(repo: RepoCreate) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Orchestrator not initialized")
 
     try:
-        # Generate repo ID from name (slug format)
-        repo_id = repo.name.lower().replace(" ", "-").replace("_", "-")
-        # Remove any non-alphanumeric chars except hyphen
-        repo_id = "".join(c for c in repo_id if c.isalnum() or c == "-")
-
+        # Let orchestrator generate UUID for repo_id
         result = orchestrator.create_repo(
-            repo_id=repo_id,
             name=repo.name,
+            provider=repo.provider,
             gitlab_url=repo.gitlab_url,
             gitlab_project_id=repo.gitlab_project_id,
             default_branch=repo.default_branch,
@@ -122,7 +120,7 @@ async def create_repo(repo: RepoCreate) -> Dict[str, Any]:
 
         return {
             "status": "created",
-            "repo_id": repo_id,
+            "repo_id": result.id,
             "message": f"Repository '{repo.name}' created successfully"
         }
     except Exception as e:
