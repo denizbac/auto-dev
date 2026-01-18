@@ -110,6 +110,8 @@ async def run_migrations():
             ("Add rejection_reason column", "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS rejection_reason TEXT"),
             ("Drop old status constraint", "ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check"),
             ("Add new status constraint", "ALTER TABLE tasks ADD CONSTRAINT tasks_status_check CHECK (status IN ('pending', 'claimed', 'in_progress', 'completed', 'failed', 'cancelled'))"),
+            # Repos table migrations
+            ("Add provider column to repos", "ALTER TABLE repos ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'gitlab'"),
         ]
         for name, sql in migrations:
             try:
@@ -903,6 +905,7 @@ def init_postgres_schema():
                 id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
                 name TEXT NOT NULL,
                 slug TEXT UNIQUE NOT NULL,
+                provider TEXT DEFAULT 'gitlab' CHECK (provider IN ('gitlab', 'github')),
                 gitlab_url TEXT NOT NULL,
                 gitlab_project_id TEXT NOT NULL,
                 default_branch TEXT DEFAULT 'main',
@@ -915,6 +918,9 @@ def init_postgres_schema():
                 updated_at TIMESTAMP DEFAULT NOW(),
                 active BOOLEAN DEFAULT true
             )""",
+
+            # Migration: Add provider column to existing repos tables
+            "ALTER TABLE repos ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'gitlab'",
 
             """CREATE TABLE IF NOT EXISTS tasks (
                 id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
