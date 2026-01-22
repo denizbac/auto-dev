@@ -260,7 +260,8 @@ class DatabaseConnection:
                 port=self.config.get('port', 5432),
                 dbname=self.config.get('name', 'autodev'),
                 user=self.config.get('user', 'autodev'),
-                password=self._get_password()
+                password=self._get_password(),
+                cursor_factory=psycopg2.extras.RealDictCursor
             )
             try:
                 yield conn
@@ -746,6 +747,7 @@ class MultiTenantOrchestrator:
                 gitlab_url=row['gitlab_url'],
                 gitlab_project_id=str(row['gitlab_project_id']),
                 slug=row['slug'],
+                provider=row.get('provider', 'gitlab'),
                 default_branch=row.get('default_branch', 'main'),
                 autonomy_mode=row.get('autonomy_mode', 'guided'),
                 settings=settings,

@@ -213,7 +213,7 @@ async def get_webhook_info(repo_id: str, regenerate: bool = False) -> WebhookInf
         raise HTTPException(status_code=404, detail="Repository not found")
 
     # Generate or retrieve webhook secret
-    settings = repo.get("settings", {}) or {}
+    settings = repo.settings or {}
     webhook_secret = settings.get("webhook_secret")
     is_new_secret = False
 
@@ -245,7 +245,7 @@ async def get_webhook_info(repo_id: str, regenerate: bool = False) -> WebhookInf
         instructions=f"""
 ## GitLab Webhook Setup
 
-1. Go to your GitLab project: {repo.get('gitlab_url')}/{repo.get('gitlab_project_id')}
+1. Go to your GitLab project: {repo.gitlab_url}/{repo.gitlab_project_id}
 2. Navigate to Settings → Webhooks
 3. Add a new webhook with these settings:
 
@@ -357,13 +357,13 @@ async def get_repo_stats(repo_id: str) -> Dict[str, Any]:
 
         return {
             "repo_id": repo_id,
-            "repo_name": repo.get("name"),
-            "autonomy_mode": repo.get("autonomy_mode"),
-            "active": repo.get("active"),
+            "repo_name": repo.name,
+            "autonomy_mode": repo.autonomy_mode,
+            "active": repo.status == "active",
             "tasks": task_stats,
             "task_types": task_types,
             "pending_approvals": len(pending_approvals),
-            "created_at": repo.get("created_at")
+            "created_at": repo.created_at
         }
     except HTTPException:
         raise
@@ -391,9 +391,10 @@ async def trigger_analysis(
             repo_id=repo_id,
             task_type=task_type,
             payload={
-                "repo_name": repo.get("name"),
-                "gitlab_url": repo.get("gitlab_url"),
-                "gitlab_project_id": repo.get("gitlab_project_id"),
+                "repo_name": repo.name,
+                "gitlab_url": repo.gitlab_url,
+                "gitlab_project_id": repo.gitlab_project_id,
+                "provider": repo.provider,
                 "triggered_manually": True,
                 "triggered_at": datetime.now().isoformat()
             },
@@ -430,9 +431,8 @@ async def dashboard_stats() -> Dict[str, Any]:
 
         repo_stats = []
         for repo in repos:
-            repo_id = repo.get("id")
-            tasks = orchestrator.list_tasks(repo_id=repo_id, limit=1000)
-            approvals = orchestrator.list_approvals(repo_id=repo_id, status="pending")
+            tasks = orchestrator.list_tasks(repo_id=repo.id, limit=1000)
+            approvals = orchestrator.list_approvals(repo_id=repo.id, status="pending")
 
             pending = len([t for t in tasks if t.get("status") == "pending"])
             in_progress = len([t for t in tasks if t.get("status") == "in_progress"])
@@ -443,9 +443,9 @@ async def dashboard_stats() -> Dict[str, Any]:
             total_approvals += len(approvals)
 
             repo_stats.append({
-                "id": repo_id,
-                "name": repo.get("name"),
-                "autonomy_mode": repo.get("autonomy_mode"),
+                "id": repo.id,
+                "name": repo.name,
+                "autonomy_mode": repo.autonomy_mode,
                 "task_count": len(tasks),
                 "pending_tasks": pending,
                 "in_progress_tasks": in_progress,
