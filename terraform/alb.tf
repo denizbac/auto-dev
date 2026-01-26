@@ -5,14 +5,14 @@
 resource "aws_security_group" "alb" {
   name        = "${var.project_name}-alb-sg"
   description = "Security group for Application Load Balancer"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = data.aws_vpc.selected.id
 
   ingress {
     description = "HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = [var.allowed_cidr]
+    cidr_blocks = [data.aws_vpc.selected.cidr_block]
   }
 
   ingress {
@@ -20,7 +20,7 @@ resource "aws_security_group" "alb" {
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = [var.allowed_cidr]
+    cidr_blocks = [data.aws_vpc.selected.cidr_block]
   }
 
   egress {
@@ -39,7 +39,7 @@ resource "aws_security_group" "alb" {
 resource "aws_security_group" "ecs_tasks" {
   name        = "${var.project_name}-ecs-tasks-sg"
   description = "Security group for ECS Fargate tasks"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = data.aws_vpc.selected.id
 
   # Allow traffic from ALB
   ingress {
@@ -100,10 +100,10 @@ resource "aws_security_group" "ecs_tasks" {
 # Application Load Balancer
 resource "aws_lb" "autodev" {
   name               = "${var.project_name}-alb"
-  internal           = false
+  internal           = true
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
-  subnets            = data.aws_subnets.default.ids
+  subnets            = var.private_subnet_ids
 
   enable_deletion_protection = false
 
@@ -117,7 +117,7 @@ resource "aws_lb_target_group" "dashboard" {
   name        = "${var.project_name}-dashboard-tg"
   port        = 8080
   protocol    = "HTTP"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = data.aws_vpc.selected.id
   target_type = "ip"
 
   health_check {
@@ -141,7 +141,7 @@ resource "aws_lb_target_group" "webhook" {
   name        = "${var.project_name}-webhook-tg"
   port        = 8081
   protocol    = "HTTP"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = data.aws_vpc.selected.id
   target_type = "ip"
 
   health_check {
@@ -188,4 +188,3 @@ resource "aws_lb_listener_rule" "webhook" {
     }
   }
 }
-

@@ -360,7 +360,7 @@ def cmd_restart(agent: str) -> str:
         # Stop then start the agent
         subprocess.run(
             ["ssh", "-i", "/home/ubuntu/.ssh/id_rsa", "localhost", 
-             f"cd /autonomous-claude && ./scripts/start_agents.sh stop {agent} && sleep 2 && ./scripts/start_agents.sh {agent}"],
+             f"cd /auto-dev && ./scripts/start_agents.sh stop {agent} && sleep 2 && ./scripts/start_agents.sh {agent}"],
             timeout=30
         )
         return f"✓ Restarted agent `{agent}`"
@@ -368,11 +368,11 @@ def cmd_restart(agent: str) -> str:
         # Try direct approach
         try:
             subprocess.run(
-                f"cd /autonomous-claude && ./scripts/start_agents.sh stop {agent}",
+                f"cd /auto-dev && ./scripts/start_agents.sh stop {agent}",
                 shell=True, timeout=15
             )
             subprocess.run(
-                f"cd /autonomous-claude && ./scripts/start_agents.sh {agent}",
+                f"cd /auto-dev && ./scripts/start_agents.sh {agent}",
                 shell=True, timeout=15
             )
             return f"✓ Restarted agent `{agent}`"

@@ -11,6 +11,16 @@ output "alb_dns_name" {
   value       = aws_lb.autodev.dns_name
 }
 
+output "vpc_id" {
+  description = "VPC ID in use"
+  value       = var.vpc_id
+}
+
+output "private_subnet_ids" {
+  description = "Private subnets used by ECS/ALB"
+  value       = var.private_subnet_ids
+}
+
 output "ecr_repository_url" {
   description = "ECR repository URL for pushing images"
   value       = aws_ecr_repository.autodev.repository_url
@@ -53,6 +63,7 @@ output "ssm_setup_commands" {
     # Set these parameters with your actual values:
     aws ssm put-parameter --name "/${var.project_name}/db-password" --value "YOUR_DB_PASSWORD" --type SecureString --overwrite
     aws ssm put-parameter --name "/${var.project_name}/gitlab-token" --value "YOUR_GITLAB_TOKEN" --type SecureString --overwrite
+    aws ssm put-parameter --name "/${var.project_name}/gitlab-webhook-secret" --value "YOUR_WEBHOOK_SECRET" --type SecureString --overwrite
     aws ssm put-parameter --name "/${var.project_name}/codex-api-key" --value "YOUR_CODEX_KEY" --type SecureString --overwrite
     aws ssm put-parameter --name "/${var.project_name}/anthropic-api-key" --value "YOUR_ANTHROPIC_KEY" --type SecureString --overwrite
   EOT

@@ -6,7 +6,7 @@ set -e
 
 # Get EC2 IP from terraform
 EC2_IP=$(cd terraform && terraform output -raw public_ip 2>/dev/null)
-SSH_KEY="$HOME/.ssh/autonomous-claude.pem"
+SSH_KEY="$HOME/.ssh/auto-dev.pem"
 
 if [ -z "$EC2_IP" ]; then
     echo "❌ Could not get EC2 IP from terraform"
@@ -28,7 +28,7 @@ SYNC_FILES=(
 echo ""
 echo "📁 Checking for new files on EC2..."
 NEW_FILES=$(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no ubuntu@$EC2_IP \
-    "cd /autonomous-claude && find watcher -name '*.py' -type f" 2>/dev/null)
+    "cd /auto-dev && find watcher -name '*.py' -type f" 2>/dev/null)
 
 for remote_file in $NEW_FILES; do
     if [ ! -f "$remote_file" ]; then
@@ -48,7 +48,7 @@ CHANGED_FILES=()
 for file in "${SYNC_FILES[@]}"; do
     # Download from EC2
     ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no ubuntu@$EC2_IP \
-        "cat /autonomous-claude/$file 2>/dev/null" > "$TEMP_DIR/$(basename $file)" 2>/dev/null || continue
+        "cat /auto-dev/$file 2>/dev/null" > "$TEMP_DIR/$(basename $file)" 2>/dev/null || continue
     
     # Compare
     if [ -f "$file" ]; then

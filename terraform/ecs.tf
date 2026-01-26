@@ -64,8 +64,13 @@ resource "aws_ecs_task_definition" "postgres" {
         }
       ]
 
-      # Note: Using ephemeral storage for now. Data is lost on task restart.
-      # TODO: Configure EFS with proper permissions for persistence
+      mountPoints = [
+        {
+          sourceVolume  = "postgres-data"
+          containerPath = "/var/lib/postgresql/data"
+          readOnly      = false
+        }
+      ]
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -77,6 +82,19 @@ resource "aws_ecs_task_definition" "postgres" {
       }
     }
   ])
+
+  volume {
+    name = "postgres-data"
+
+    efs_volume_configuration {
+      file_system_id     = aws_efs_file_system.autodev.id
+      transit_encryption = "ENABLED"
+      authorization_config {
+        access_point_id = aws_efs_access_point.postgres.id
+        iam             = "ENABLED"
+      }
+    }
+  }
 
   tags = {
     Name = "${var.project_name}-postgres-task"
@@ -94,9 +112,9 @@ resource "aws_ecs_service" "postgres" {
   enable_execute_command = true
 
   network_configuration {
-    subnets          = data.aws_subnets.default.ids
+    subnets          = var.private_subnet_ids
     security_groups  = [aws_security_group.ecs_tasks.id]
-    assign_public_ip = true
+    assign_public_ip = false
   }
 
   service_registries {
@@ -158,9 +176,9 @@ resource "aws_ecs_service" "redis" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = data.aws_subnets.default.ids
+    subnets          = var.private_subnet_ids
     security_groups  = [aws_security_group.ecs_tasks.id]
-    assign_public_ip = true
+    assign_public_ip = false
   }
 
   service_registries {
@@ -169,6 +187,97 @@ resource "aws_ecs_service" "redis" {
 
   tags = {
     Name = "${var.project_name}-redis-service"
+  }
+}
+
+# Qdrant Task Definition
+resource "aws_ecs_task_definition" "qdrant" {
+  family                   = "${var.project_name}-qdrant"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 256
+  memory                   = 512  # Minimum for 256 CPU
+  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "qdrant"
+      image     = "qdrant/qdrant:latest"
+      essential = true
+
+      portMappings = [
+        {
+          containerPort = 6333
+          protocol      = "tcp"
+        },
+        {
+          containerPort = 6334
+          protocol      = "tcp"
+        }
+      ]
+
+      environment = [
+        { name = "QDRANT__SERVICE__GRPC_PORT", value = "6334" }
+      ]
+
+      mountPoints = [
+        {
+          sourceVolume  = "qdrant-storage"
+          containerPath = "/qdrant/storage"
+          readOnly      = false
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.ecs.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "qdrant"
+        }
+      }
+    }
+  ])
+
+  volume {
+    name = "qdrant-storage"
+
+    efs_volume_configuration {
+      file_system_id     = aws_efs_file_system.autodev.id
+      transit_encryption = "ENABLED"
+      authorization_config {
+        access_point_id = aws_efs_access_point.data.id
+        iam             = "ENABLED"
+      }
+    }
+  }
+
+  tags = {
+    Name = "${var.project_name}-qdrant-task"
+  }
+}
+
+# Qdrant Service
+resource "aws_ecs_service" "qdrant" {
+  name            = "${var.project_name}-qdrant"
+  cluster         = aws_ecs_cluster.autodev.id
+  task_definition = aws_ecs_task_definition.qdrant.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = var.private_subnet_ids
+    security_groups  = [aws_security_group.ecs_tasks.id]
+    assign_public_ip = false
+  }
+
+  service_registries {
+    registry_arn = aws_service_discovery_service.qdrant.arn
+  }
+
+  tags = {
+    Name = "${var.project_name}-qdrant-service"
   }
 }
 
@@ -206,6 +315,7 @@ resource "aws_ecs_task_definition" "dashboard" {
         { name = "DB_USER", value = "autodev" },
         { name = "DB_NAME", value = "autodev" },
         { name = "REDIS_URL", value = "redis://redis.autodev.local:6379" },
+        { name = "QDRANT_HOST", value = "qdrant.autodev.local" },
         { name = "ECS_CLUSTER", value = var.project_name },
         { name = "AWS_REGION", value = var.aws_region },
         { name = "USE_ECS", value = "true" }
@@ -271,9 +381,9 @@ resource "aws_ecs_service" "dashboard" {
   health_check_grace_period_seconds = 120  # Allow time for task startup before health checks
 
   network_configuration {
-    subnets          = data.aws_subnets.default.ids
+    subnets          = var.private_subnet_ids
     security_groups  = [aws_security_group.ecs_tasks.id]
-    assign_public_ip = true
+    assign_public_ip = false
   }
 
   load_balancer {
@@ -322,13 +432,18 @@ resource "aws_ecs_task_definition" "webhook" {
         { name = "DB_HOST", value = "postgres.autodev.local" },
         { name = "DB_USER", value = "autodev" },
         { name = "DB_NAME", value = "autodev" },
-        { name = "REDIS_URL", value = "redis://redis.autodev.local:6379" }
+        { name = "REDIS_URL", value = "redis://redis.autodev.local:6379" },
+        { name = "QDRANT_HOST", value = "qdrant.autodev.local" }
       ]
 
       secrets = [
         {
           name      = "DB_PASSWORD"
           valueFrom = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/${var.project_name}/db-password"
+        },
+        {
+          name      = "GITLAB_WEBHOOK_SECRET"
+          valueFrom = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/${var.project_name}/gitlab-webhook-secret"
         }
       ]
 
@@ -357,9 +472,9 @@ resource "aws_ecs_service" "webhook" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = data.aws_subnets.default.ids
+    subnets          = var.private_subnet_ids
     security_groups  = [aws_security_group.ecs_tasks.id]
-    assign_public_ip = true
+    assign_public_ip = false
   }
 
   load_balancer {
@@ -397,7 +512,8 @@ resource "aws_ecs_task_definition" "scheduler" {
         { name = "DB_HOST", value = "postgres.autodev.local" },
         { name = "DB_USER", value = "autodev" },
         { name = "DB_NAME", value = "autodev" },
-        { name = "REDIS_URL", value = "redis://redis.autodev.local:6379" }
+        { name = "REDIS_URL", value = "redis://redis.autodev.local:6379" },
+        { name = "QDRANT_HOST", value = "qdrant.autodev.local" }
       ]
 
       secrets = [
@@ -432,9 +548,9 @@ resource "aws_ecs_service" "scheduler" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = data.aws_subnets.default.ids
+    subnets          = var.private_subnet_ids
     security_groups  = [aws_security_group.ecs_tasks.id]
-    assign_public_ip = true
+    assign_public_ip = false
   }
 
   tags = {
@@ -470,6 +586,7 @@ resource "aws_ecs_task_definition" "agents" {
         { name = "DB_USER", value = "autodev" },
         { name = "DB_NAME", value = "autodev" },
         { name = "REDIS_URL", value = "redis://redis.autodev.local:6379" },
+        { name = "QDRANT_HOST", value = "qdrant.autodev.local" },
         { name = "AUTODEV_LLM_PROVIDER", value = "codex" }
       ]
 
@@ -541,9 +658,9 @@ resource "aws_ecs_service" "agents" {
   enable_execute_command = true  # Allow exec into containers for debugging/auth
 
   network_configuration {
-    subnets          = data.aws_subnets.default.ids
+    subnets          = var.private_subnet_ids
     security_groups  = [aws_security_group.ecs_tasks.id]
-    assign_public_ip = true
+    assign_public_ip = false
   }
 
   service_registries {

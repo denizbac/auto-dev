@@ -5,9 +5,9 @@ Publish digital products to Gumroad using browser automation.
 
 ## Prerequisites
 - Gumroad credentials stored in AWS SSM:
-  - `/autonomous-claude/gumroad/email`
-  - `/autonomous-claude/gumroad/password`
-- Product files prepared in `/autonomous-claude/data/projects/<product_name>/`
+  - `/auto-dev/gumroad/email`
+  - `/auto-dev/gumroad/password`
+- Product files prepared in `/auto-dev/data/projects/<product_name>/`
 - GUMROAD_LISTING.md with product details
 
 ## Execution Steps
@@ -15,8 +15,8 @@ Publish digital products to Gumroad using browser automation.
 ### 1. Retrieve Credentials
 ```bash
 # Get credentials from SSM (run on EC2 instance)
-GUMROAD_EMAIL=$(aws ssm get-parameter --name "/autonomous-claude/gumroad/email" --with-decryption --query "Parameter.Value" --output text --region us-east-1)
-GUMROAD_PASSWORD=$(aws ssm get-parameter --name "/autonomous-claude/gumroad/password" --with-decryption --query "Parameter.Value" --output text --region us-east-1)
+GUMROAD_EMAIL=$(aws ssm get-parameter --name "/auto-dev/gumroad/email" --with-decryption --query "Parameter.Value" --output text --region us-east-1)
+GUMROAD_PASSWORD=$(aws ssm get-parameter --name "/auto-dev/gumroad/password" --with-decryption --query "Parameter.Value" --output text --region us-east-1)
 ```
 
 ### 2. Browser Automation Flow

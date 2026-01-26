@@ -32,11 +32,11 @@ def get_credential(key: str) -> str:
     """Fetch a credential from AWS SSM Parameter Store."""
     # Map key names to SSM parameter names
     ssm_map = {
-        'GUMROAD_EMAIL': '/autonomous-claude/gumroad/email',
-        'GUMROAD_PASSWORD': '/autonomous-claude/gumroad/password'
+        'GUMROAD_EMAIL': '/auto-dev/gumroad/email',
+        'GUMROAD_PASSWORD': '/auto-dev/gumroad/password'
     }
     
-    ssm_name = ssm_map.get(key, f'/autonomous-claude/gumroad/{key.lower()}')
+    ssm_name = ssm_map.get(key, f'/auto-dev/gumroad/{key.lower()}')
     
     try:
         result = subprocess.run(

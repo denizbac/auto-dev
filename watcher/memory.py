@@ -6,6 +6,7 @@ Provides both short-term (SQLite) and long-term (Qdrant) memory capabilities.
 """
 
 import sqlite3
+import os
 import json
 import uuid
 from datetime import datetime
@@ -448,11 +449,10 @@ def create_memory_systems(config: Dict[str, Any]) -> tuple:
     )
     
     long_term = LongTermMemoryDB(
-        host=config['memory']['long_term']['host'],
+        host=os.environ.get("QDRANT_HOST", config['memory']['long_term']['host']),
         port=config['memory']['long_term']['port'],
         collection_name=config['memory']['long_term']['collection_name'],
         embedding_model=config['memory']['long_term']['embedding_model']
     )
     
     return short_term, long_term
-

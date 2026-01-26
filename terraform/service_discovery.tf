@@ -5,7 +5,7 @@
 resource "aws_service_discovery_private_dns_namespace" "autodev" {
   name        = "autodev.local"
   description = "Private DNS namespace for Auto-Dev services"
-  vpc         = data.aws_vpc.default.id
+  vpc         = data.aws_vpc.selected.id
 
   tags = {
     Name = "${var.project_name}-namespace"
@@ -56,6 +56,29 @@ resource "aws_service_discovery_service" "redis" {
 
   tags = {
     Name = "${var.project_name}-sd-redis"
+  }
+}
+
+resource "aws_service_discovery_service" "qdrant" {
+  name = "qdrant"
+
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.autodev.id
+
+    dns_records {
+      ttl  = 10
+      type = "A"
+    }
+
+    routing_policy = "MULTIVALUE"
+  }
+
+  health_check_custom_config {
+    failure_threshold = 1
+  }
+
+  tags = {
+    Name = "${var.project_name}-sd-qdrant"
   }
 }
 

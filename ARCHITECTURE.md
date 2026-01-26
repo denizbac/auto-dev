@@ -452,18 +452,20 @@ AWS Resources:
 │   ├── Webhook Service
 │   └── Scheduler Service
 │
-├── Application Load Balancer (ALB)
-│   └── Routes traffic to Dashboard
+├── Application Load Balancer (ALB, internal)
+│   └── Routes traffic to Dashboard within VPC
 │
 ├── ECR Repository
 │   └── auto-dev:latest Docker image
 │
 ├── EFS File System
-│   └── Shared storage for agent workspaces
+│   ├── PostgreSQL data
+│   └── Shared storage for agent workspaces and Qdrant
 │
 ├── Service Discovery (Cloud Map)
 │   └── autodev.local namespace
 │       ├── postgres.autodev.local
+│       ├── qdrant.autodev.local
 │       └── redis.autodev.local
 │
 ├── SSM Parameter Store
@@ -471,7 +473,8 @@ AWS Resources:
 │       └── gitlab-token
 │
 ├── ECS Services (supporting)
-│   ├── PostgreSQL
+│   ├── PostgreSQL (EFS-backed)
+│   ├── Qdrant (vector DB)
 │   └── Redis
 │
 └── GitLab Webhooks (external)
@@ -532,11 +535,11 @@ aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-
 
 ### Human Approval
 ```bash
-# Via Dashboard
-http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com → Approval Queue
+# Via Dashboard (internal)
+http://internal-auto-dev-alb-588827158.us-east-1.elb.amazonaws.com → Approval Queue
 
 # Via API
-curl -X POST http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com/api/approvals/<id>/approve
-curl -X POST http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com/api/approvals/<id>/reject \
+curl -X POST http://internal-auto-dev-alb-588827158.us-east-1.elb.amazonaws.com/api/approvals/<id>/approve
+curl -X POST http://internal-auto-dev-alb-588827158.us-east-1.elb.amazonaws.com/api/approvals/<id>/reject \
   -d '{"reason": "Needs more work"}'
 ```

@@ -16,7 +16,7 @@ echo "Storing Gumroad credentials in SSM Parameter Store..."
 
 # Store email (encrypted)
 aws ssm put-parameter \
-    --name "/autonomous-claude/gumroad/email" \
+    --name "/auto-dev/gumroad/email" \
     --value "$GUMROAD_EMAIL" \
     --type "SecureString" \
     --overwrite \
@@ -24,7 +24,7 @@ aws ssm put-parameter \
 
 # Store password (encrypted)
 aws ssm put-parameter \
-    --name "/autonomous-claude/gumroad/password" \
+    --name "/auto-dev/gumroad/password" \
     --value "$GUMROAD_PASSWORD" \
     --type "SecureString" \
     --overwrite \
@@ -33,8 +33,8 @@ aws ssm put-parameter \
 echo "✅ Gumroad credentials stored successfully!"
 echo ""
 echo "Parameters created:"
-echo "  /autonomous-claude/gumroad/email"
-echo "  /autonomous-claude/gumroad/password"
+echo "  /auto-dev/gumroad/email"
+echo "  /auto-dev/gumroad/password"
 echo ""
-echo "To verify: aws ssm get-parameter --name '/autonomous-claude/gumroad/email' --with-decryption --region us-east-1"
+echo "To verify: aws ssm get-parameter --name '/auto-dev/gumroad/email' --with-decryption --region us-east-1"
 

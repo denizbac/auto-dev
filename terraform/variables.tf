@@ -7,6 +7,16 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "vpc_id" {
+  description = "VPC ID for deployment"
+  type        = string
+}
+
+variable "private_subnet_ids" {
+  description = "Private subnet IDs for ECS/ALB"
+  type        = list(string)
+}
+
 variable "project_name" {
   description = "Project name for resource tagging and naming"
   type        = string
@@ -17,12 +27,6 @@ variable "environment" {
   description = "Environment (dev, staging, prod)"
   type        = string
   default     = "dev"
-}
-
-variable "allowed_cidr" {
-  description = "CIDR block allowed to access ALB (use your IP for security)"
-  type        = string
-  default     = "0.0.0.0/0"
 }
 
 # Agent types - used to create task definitions and services

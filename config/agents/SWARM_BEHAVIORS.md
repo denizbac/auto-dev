@@ -134,11 +134,11 @@ The PM agent creates detailed specifications before Builder starts work:
 
 ### For PM:
 - Read the idea carefully and create a detailed spec
-- Save spec to `/autonomous-claude/data/specs/{product-slug}.md`
+- Save spec to `/auto-dev/data/specs/{product-slug}.md`
 - Create `build_product` task with `spec_path` in the payload
 
 ### For Builder:
-- ALWAYS read the spec before building: `cat /autonomous-claude/data/specs/<slug>.md`
+- ALWAYS read the spec before building: `cat /auto-dev/data/specs/<slug>.md`
 - Follow the Requirements section closely
 - If something is unclear, ask PM before guessing
 - When complete, create `code_review` task for Reviewer (NOT test_product)

@@ -63,7 +63,7 @@ aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-
 
 ```bash
 cd terraform && terraform output dashboard_url
-# http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com
+# http://internal-auto-dev-alb-588827158.us-east-1.elb.amazonaws.com
 ```
 
 ## Architecture

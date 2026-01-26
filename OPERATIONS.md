@@ -5,8 +5,8 @@ This document explains how to manage the autonomous AI swarm running on **AWS EC
 ## Quick Reference
 
 ```bash
-# === DASHBOARD ===
-http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com
+# === DASHBOARD (internal) ===
+http://internal-auto-dev-alb-588827158.us-east-1.elb.amazonaws.com
 
 # === DEPLOY CODE CHANGES ===
 aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev
@@ -42,8 +42,8 @@ terraform output
 
 Output:
 ```
-alb_dns_name = "auto-dev-alb-588827158.us-east-1.elb.amazonaws.com"
-dashboard_url = "http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com"
+alb_dns_name = "internal-auto-dev-alb-588827158.us-east-1.elb.amazonaws.com"
+dashboard_url = "http://internal-auto-dev-alb-588827158.us-east-1.elb.amazonaws.com"
 ecr_repository_url = "569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev"
 ecs_cluster_name = "auto-dev"
 cloudwatch_log_group = "/ecs/auto-dev"
@@ -63,6 +63,7 @@ cloudwatch_log_group = "/ecs/auto-dev"
 | auto-dev-devops | DevOps agent |
 | auto-dev-bug_finder | Bug Finder agent |
 | auto-dev-postgres | PostgreSQL database |
+| auto-dev-qdrant | Qdrant vector database |
 | auto-dev-redis | Redis for coordination |
 
 ---
@@ -143,7 +144,7 @@ aws logs get-log-events --log-group-name /ecs/auto-dev --log-stream-name "pm/pm/
 
 ### Access
 
-Dashboard URL: `http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com`
+Dashboard URL: `http://internal-auto-dev-alb-588827158.us-east-1.elb.amazonaws.com`
 
 ### Dashboard Features
 
@@ -489,6 +490,8 @@ Required for publishing:
 - `/auto-dev/npm/token`
 - `/auto-dev/vercel/token`
 - `/auto-dev/apify/api_key`
+Required for GitLab webhooks:
+- `/auto-dev/gitlab-webhook-secret`
 
 Optional (Codex fallback):
 - `/auto-dev/openai/api_key` (only if you want API-key auth instead of device login)
@@ -613,6 +616,20 @@ terraform apply
 terraform destroy
 ```
 
+### Required Terraform Inputs (Internal Subnets)
+
+Set these in `terraform.tfvars` before `terraform apply`:
+
+```hcl
+vpc_id = "vpc-xxxxxxxx"
+private_subnet_ids = [
+  "subnet-aaaa",
+  "subnet-bbbb",
+  "subnet-cccc",
+  "subnet-dddd"
+]
+```
+
 ---
 
 ## 13. Monitoring
@@ -628,11 +645,11 @@ done
 # Check for recent errors in CloudWatch
 aws logs tail /ecs/auto-dev --filter-pattern "ERROR" --since 1h --region us-east-1
 
-# Check dashboard health
-curl -s http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com/health | jq .
+# Check dashboard health (from within VPC)
+curl -s http://internal-auto-dev-alb-588827158.us-east-1.elb.amazonaws.com/health | jq .
 
-# Check pending tasks via API
-curl -s http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com/api/tasks?status=pending | jq '.tasks | length'
+# Check pending tasks via API (from within VPC)
+curl -s http://internal-auto-dev-alb-588827158.us-east-1.elb.amazonaws.com/api/tasks?status=pending | jq '.tasks | length'
 ```
 
 ### CloudWatch Alarms (Optional)
@@ -663,8 +680,8 @@ aws cloudwatch put-metric-alarm \
 ## Summary Commands
 
 ```bash
-# === DASHBOARD ===
-http://auto-dev-alb-588827158.us-east-1.elb.amazonaws.com
+# === DASHBOARD (internal) ===
+http://internal-auto-dev-alb-588827158.us-east-1.elb.amazonaws.com
 
 # === DEPLOY CODE CHANGES ===
 aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev

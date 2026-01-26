@@ -22,23 +22,17 @@ provider "aws" {
       Project     = var.project_name
       Environment = var.environment
       ManagedBy   = "terraform"
+      Application = "auto_dev"
     }
   }
 }
 
 # =============================================================================
-# VPC - Use default VPC for simplicity
+# VPC - Use provided VPC and private subnets
 # =============================================================================
 
-data "aws_vpc" "default" {
-  default = true
-}
-
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
+data "aws_vpc" "selected" {
+  id = var.vpc_id
 }
 
 # =============================================================================
@@ -48,6 +42,7 @@ data "aws_subnets" "default" {
 # Note: These are placeholder parameters. Set actual values using AWS CLI:
 # aws ssm put-parameter --name "/auto-dev/db-password" --value "YOUR_PASSWORD" --type SecureString --overwrite
 # aws ssm put-parameter --name "/auto-dev/gitlab-token" --value "YOUR_TOKEN" --type SecureString --overwrite
+# aws ssm put-parameter --name "/auto-dev/gitlab-webhook-secret" --value "YOUR_WEBHOOK_SECRET" --type SecureString --overwrite
 # aws ssm put-parameter --name "/auto-dev/codex-api-key" --value "YOUR_KEY" --type SecureString --overwrite
 # aws ssm put-parameter --name "/auto-dev/anthropic-api-key" --value "YOUR_KEY" --type SecureString --overwrite
 
@@ -78,6 +73,21 @@ resource "aws_ssm_parameter" "gitlab_token" {
 
   tags = {
     Name = "${var.project_name}-gitlab-token"
+  }
+}
+
+resource "aws_ssm_parameter" "gitlab_webhook_secret" {
+  name        = "/${var.project_name}/gitlab-webhook-secret"
+  description = "GitLab webhook secret token"
+  type        = "SecureString"
+  value       = "CHANGE_ME"  # Placeholder - update via AWS Console or CLI
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+
+  tags = {
+    Name = "${var.project_name}-gitlab-webhook-secret"
   }
 }
 

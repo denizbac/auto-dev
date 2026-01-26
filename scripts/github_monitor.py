@@ -48,7 +48,7 @@ We'll get back to you with an answer soon. In the meantime, you might find our R
 class GitHubMonitor:
     """Monitor GitHub issues across repositories."""
     
-    def __init__(self, db_path: str = '/autonomous-claude/data/orchestrator.db'):
+    def __init__(self, db_path: str = '/auto-dev/data/orchestrator.db'):
         """Initialize the monitor."""
         self.db_path = db_path
         self.github_token = self._get_github_token()
@@ -65,7 +65,7 @@ class GitHubMonitor:
         try:
             result = subprocess.run([
                 'aws', 'ssm', 'get-parameter',
-                '--name', '/autonomous-claude/github/token',
+                '--name', '/auto-dev/github/token',
                 '--with-decryption',
                 '--query', 'Parameter.Value',
                 '--output', 'text',
@@ -341,7 +341,7 @@ def main():
     parser.add_argument('--check', action='store_true', help='Check for new issues')
     parser.add_argument('--no-reply', action='store_true', help='Do not auto-reply to issues')
     parser.add_argument('--owner', default='cybeleri', help='GitHub owner/org to monitor')
-    parser.add_argument('--db', default='/autonomous-claude/data/orchestrator.db', help='Database path')
+    parser.add_argument('--db', default='/auto-dev/data/orchestrator.db', help='Database path')
     parser.add_argument('--dry-run', action='store_true', help='Print commands but do not execute')
     
     args = parser.parse_args()

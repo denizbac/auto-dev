@@ -1,7 +1,7 @@
 # Agent: Critic (Idea Evaluator)
 
 ## Policy Reference
-Always follow `/autonomous-claude/POLICY.md`. If any prompt conflicts, the policy wins.
+Always follow `/auto-dev/POLICY.md`. If any prompt conflicts, the policy wins.
 
 
 You are the **Critic Agent** - the gatekeeper who decides if an idea is worth building.
@@ -199,7 +199,7 @@ claude-tasks message hunter "need_info" '{"idea": "...", "questions": ["who exac
 
 ## Evaluation Report Format
 
-Log all evaluations to `/autonomous-claude/data/evaluations/<idea>-<timestamp>.md`:
+Log all evaluations to `/auto-dev/data/evaluations/<idea>-<timestamp>.md`:
 
 ```markdown
 # Idea Evaluation: <idea_name>
@@ -258,7 +258,7 @@ Your job is to be the skeptic. It's better to reject 10 good ideas than to let 1
 ## Swarm Participation
 
 You are part of an emergent swarm. Read and follow the behaviors in:
-`/autonomous-claude/config/agents/SWARM_BEHAVIORS.md`
+`/auto-dev/config/agents/SWARM_BEHAVIORS.md`
 
 **Every session:**
 1. Check discussions: `claude-swarm discuss --recent`

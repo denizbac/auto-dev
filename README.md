@@ -111,6 +111,8 @@ Human provides high-level goals
 
 - Python 3.10+
 - PostgreSQL
+- Redis
+- Qdrant
 - GitLab account with API access
 - Codex CLI (or Claude CLI as fallback)
 
@@ -167,6 +169,19 @@ export GITLAB_TOKEN="your-token"
 aws ssm put-parameter \
   --name "/auto-dev/your-repo/gitlab-token" \
   --value "your-token" \
+  --type SecureString
+```
+
+### Set Up GitLab Webhook Secret
+
+```bash
+# Store in environment
+export GITLAB_WEBHOOK_SECRET="your-webhook-secret"
+
+# Or use AWS SSM (production)
+aws ssm put-parameter \
+  --name "/auto-dev/gitlab-webhook-secret" \
+  --value "your-webhook-secret" \
   --type SecureString
 ```
 

@@ -22,7 +22,7 @@ resource "aws_efs_file_system" "autodev" {
 resource "aws_security_group" "efs" {
   name        = "${var.project_name}-efs-sg"
   description = "Security group for EFS mount targets"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = data.aws_vpc.selected.id
 
   ingress {
     description     = "NFS from ECS tasks"
@@ -46,9 +46,9 @@ resource "aws_security_group" "efs" {
 
 # Mount targets in each subnet
 resource "aws_efs_mount_target" "autodev" {
-  count           = length(data.aws_subnets.default.ids)
+  count           = length(var.private_subnet_ids)
   file_system_id  = aws_efs_file_system.autodev.id
-  subnet_id       = data.aws_subnets.default.ids[count.index]
+  subnet_id       = var.private_subnet_ids[count.index]
   security_groups = [aws_security_group.efs.id]
 }
 
@@ -97,4 +97,3 @@ resource "aws_efs_access_point" "data" {
     Name = "${var.project_name}-efs-data"
   }
 }
-

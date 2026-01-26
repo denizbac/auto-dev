@@ -8,9 +8,9 @@
 
 set -e
 
-BOT_DIR="/autonomous-claude"
-BOT_LOG="/autonomous-claude/logs/slack_bot.log"
-NGROK_LOG="/autonomous-claude/logs/ngrok.log"
+BOT_DIR="/auto-dev"
+BOT_LOG="/auto-dev/logs/slack_bot.log"
+NGROK_LOG="/auto-dev/logs/ngrok.log"
 
 cd "$BOT_DIR"
 

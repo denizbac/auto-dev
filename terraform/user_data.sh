@@ -25,13 +25,13 @@ apt-get install -y \
     lsb-release
 
 # Create project directory structure
-mkdir -p /autonomous-claude/{config,data,logs,dashboard,watcher,skills}
-mkdir -p /autonomous-claude/data/{memory,screenshots,projects,income}
+mkdir -p /auto-dev/{config,data,logs,dashboard,watcher,skills}
+mkdir -p /auto-dev/data/{memory,screenshots,projects,income}
 
 # Set ownership (ubuntu user)
-chown -R ubuntu:ubuntu /autonomous-claude
+chown -R ubuntu:ubuntu /auto-dev
 
 # Signal completion
-touch /autonomous-claude/.user_data_complete
-echo "User data script completed at $(date)" >> /autonomous-claude/logs/setup.log
+touch /auto-dev/.user_data_complete
+echo "User data script completed at $(date)" >> /auto-dev/logs/setup.log
 
