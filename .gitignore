@@ -60,3 +60,9 @@ node_modules/
 *.tmp
 *.temp
 
+# Local skills bundles
+skills/codex-readiness-integration-test/
+skills/codex-readiness-unit-test/
+skills/create-plan/
+skills/skill-creator/
+skills/skill-installer/
