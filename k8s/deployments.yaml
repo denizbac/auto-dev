@@ -22,7 +22,7 @@ spec:
         - name: auto-dev-registry-cred
       containers:
         - name: auto-dev
-          image: auto-dev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "dashboard.server"]
           ports:
@@ -76,7 +76,7 @@ spec:
         - name: auto-dev-registry-cred
       containers:
         - name: auto-dev
-          image: auto-dev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "integrations.webhook_server"]
           ports:
@@ -123,7 +123,7 @@ spec:
         - name: auto-dev-registry-cred
       containers:
         - name: auto-dev
-          image: auto-dev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "watcher.scheduler"]
           envFrom:
@@ -163,7 +163,7 @@ spec:
         - name: auto-dev-registry-cred
       containers:
         - name: auto-dev
-          image: auto-dev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "watcher.agent_runner", "--agent", "pm"]
           envFrom:
@@ -203,7 +203,7 @@ spec:
         - name: auto-dev-registry-cred
       containers:
         - name: auto-dev
-          image: auto-dev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "watcher.agent_runner", "--agent", "architect"]
           envFrom:
@@ -243,7 +243,7 @@ spec:
         - name: auto-dev-registry-cred
       containers:
         - name: auto-dev
-          image: auto-dev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "watcher.agent_runner", "--agent", "builder"]
           envFrom:
@@ -283,7 +283,7 @@ spec:
         - name: auto-dev-registry-cred
       containers:
         - name: auto-dev
-          image: auto-dev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "watcher.agent_runner", "--agent", "reviewer"]
           envFrom:
@@ -323,7 +323,7 @@ spec:
         - name: auto-dev-registry-cred
       containers:
         - name: auto-dev
-          image: auto-dev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "watcher.agent_runner", "--agent", "tester"]
           envFrom:
@@ -363,7 +363,7 @@ spec:
         - name: auto-dev-registry-cred
       containers:
         - name: auto-dev
-          image: auto-dev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "watcher.agent_runner", "--agent", "security"]
           envFrom:
@@ -403,7 +403,7 @@ spec:
         - name: auto-dev-registry-cred
       containers:
         - name: auto-dev
-          image: auto-dev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "watcher.agent_runner", "--agent", "devops"]
           envFrom:
@@ -443,7 +443,7 @@ spec:
         - name: auto-dev-registry-cred
       containers:
         - name: auto-dev
-          image: auto-dev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "watcher.agent_runner", "--agent", "bug_finder"]
           envFrom:
