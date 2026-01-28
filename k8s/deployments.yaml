@@ -1,0 +1,460 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-dev-dashboard
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-dev-dashboard
+  template:
+    metadata:
+      labels:
+        app: auto-dev-dashboard
+        team: ois
+        costcenter: "14866"
+    spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
+      containers:
+        - name: auto-dev
+          image: auto-dev:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "dashboard.server"]
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: auto-dev-config
+            - secretRef:
+                name: auto-dev-secrets
+          volumeMounts:
+            - name: auto-dev-data
+              mountPath: /auto-dev/data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: auto-dev-data
+          persistentVolumeClaim:
+            claimName: auto-dev-dashboard-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-dev-webhook
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-dev-webhook
+  template:
+    metadata:
+      labels:
+        app: auto-dev-webhook
+        team: ois
+        costcenter: "14866"
+    spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
+      containers:
+        - name: auto-dev
+          image: auto-dev:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "integrations.webhook_server"]
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: auto-dev-config
+            - secretRef:
+                name: auto-dev-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-dev-scheduler
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-dev-scheduler
+  template:
+    metadata:
+      labels:
+        app: auto-dev-scheduler
+        team: ois
+        costcenter: "14866"
+    spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
+      containers:
+        - name: auto-dev
+          image: auto-dev:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "watcher.scheduler"]
+          envFrom:
+            - configMapRef:
+                name: auto-dev-config
+            - secretRef:
+                name: auto-dev-secrets
+          volumeMounts:
+            - name: auto-dev-data
+              mountPath: /auto-dev/data
+      volumes:
+        - name: auto-dev-data
+          persistentVolumeClaim:
+            claimName: auto-dev-scheduler-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-dev-agent-pm
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-dev-agent-pm
+  template:
+    metadata:
+      labels:
+        app: auto-dev-agent-pm
+        team: ois
+        costcenter: "14866"
+    spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
+      containers:
+        - name: auto-dev
+          image: auto-dev:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "watcher.agent_runner", "--agent", "pm"]
+          envFrom:
+            - configMapRef:
+                name: auto-dev-config
+            - secretRef:
+                name: auto-dev-secrets
+          volumeMounts:
+            - name: auto-dev-data
+              mountPath: /auto-dev/data
+      volumes:
+        - name: auto-dev-data
+          persistentVolumeClaim:
+            claimName: auto-dev-agent-pm-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-dev-agent-architect
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-dev-agent-architect
+  template:
+    metadata:
+      labels:
+        app: auto-dev-agent-architect
+        team: ois
+        costcenter: "14866"
+    spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
+      containers:
+        - name: auto-dev
+          image: auto-dev:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "watcher.agent_runner", "--agent", "architect"]
+          envFrom:
+            - configMapRef:
+                name: auto-dev-config
+            - secretRef:
+                name: auto-dev-secrets
+          volumeMounts:
+            - name: auto-dev-data
+              mountPath: /auto-dev/data
+      volumes:
+        - name: auto-dev-data
+          persistentVolumeClaim:
+            claimName: auto-dev-agent-architect-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-dev-agent-builder
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-dev-agent-builder
+  template:
+    metadata:
+      labels:
+        app: auto-dev-agent-builder
+        team: ois
+        costcenter: "14866"
+    spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
+      containers:
+        - name: auto-dev
+          image: auto-dev:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "watcher.agent_runner", "--agent", "builder"]
+          envFrom:
+            - configMapRef:
+                name: auto-dev-config
+            - secretRef:
+                name: auto-dev-secrets
+          volumeMounts:
+            - name: auto-dev-data
+              mountPath: /auto-dev/data
+      volumes:
+        - name: auto-dev-data
+          persistentVolumeClaim:
+            claimName: auto-dev-agent-builder-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-dev-agent-reviewer
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-dev-agent-reviewer
+  template:
+    metadata:
+      labels:
+        app: auto-dev-agent-reviewer
+        team: ois
+        costcenter: "14866"
+    spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
+      containers:
+        - name: auto-dev
+          image: auto-dev:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "watcher.agent_runner", "--agent", "reviewer"]
+          envFrom:
+            - configMapRef:
+                name: auto-dev-config
+            - secretRef:
+                name: auto-dev-secrets
+          volumeMounts:
+            - name: auto-dev-data
+              mountPath: /auto-dev/data
+      volumes:
+        - name: auto-dev-data
+          persistentVolumeClaim:
+            claimName: auto-dev-agent-reviewer-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-dev-agent-tester
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-dev-agent-tester
+  template:
+    metadata:
+      labels:
+        app: auto-dev-agent-tester
+        team: ois
+        costcenter: "14866"
+    spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
+      containers:
+        - name: auto-dev
+          image: auto-dev:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "watcher.agent_runner", "--agent", "tester"]
+          envFrom:
+            - configMapRef:
+                name: auto-dev-config
+            - secretRef:
+                name: auto-dev-secrets
+          volumeMounts:
+            - name: auto-dev-data
+              mountPath: /auto-dev/data
+      volumes:
+        - name: auto-dev-data
+          persistentVolumeClaim:
+            claimName: auto-dev-agent-tester-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-dev-agent-security
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-dev-agent-security
+  template:
+    metadata:
+      labels:
+        app: auto-dev-agent-security
+        team: ois
+        costcenter: "14866"
+    spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
+      containers:
+        - name: auto-dev
+          image: auto-dev:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "watcher.agent_runner", "--agent", "security"]
+          envFrom:
+            - configMapRef:
+                name: auto-dev-config
+            - secretRef:
+                name: auto-dev-secrets
+          volumeMounts:
+            - name: auto-dev-data
+              mountPath: /auto-dev/data
+      volumes:
+        - name: auto-dev-data
+          persistentVolumeClaim:
+            claimName: auto-dev-agent-security-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-dev-agent-devops
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-dev-agent-devops
+  template:
+    metadata:
+      labels:
+        app: auto-dev-agent-devops
+        team: ois
+        costcenter: "14866"
+    spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
+      containers:
+        - name: auto-dev
+          image: auto-dev:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "watcher.agent_runner", "--agent", "devops"]
+          envFrom:
+            - configMapRef:
+                name: auto-dev-config
+            - secretRef:
+                name: auto-dev-secrets
+          volumeMounts:
+            - name: auto-dev-data
+              mountPath: /auto-dev/data
+      volumes:
+        - name: auto-dev-data
+          persistentVolumeClaim:
+            claimName: auto-dev-agent-devops-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-dev-agent-bug-finder
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-dev-agent-bug-finder
+  template:
+    metadata:
+      labels:
+        app: auto-dev-agent-bug-finder
+        team: ois
+        costcenter: "14866"
+    spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
+      containers:
+        - name: auto-dev
+          image: auto-dev:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "watcher.agent_runner", "--agent", "bug_finder"]
+          envFrom:
+            - configMapRef:
+                name: auto-dev-config
+            - secretRef:
+                name: auto-dev-secrets
+          volumeMounts:
+            - name: auto-dev-data
+              mountPath: /auto-dev/data
+      volumes:
+        - name: auto-dev-data
+          persistentVolumeClaim:
+            claimName: auto-dev-agent-bug-finder-data

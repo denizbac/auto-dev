@@ -1,7 +1,7 @@
 # Skill: Upwork Job Application
 
 ## Policy Note
-Deprecated: services are prohibited. See `/autonomous-claude/POLICY.md`.
+Deprecated: services are prohibited. See `/auto-dev/POLICY.md`.
 
 ## Description
 Search for and apply to relevant freelance jobs on Upwork platform.

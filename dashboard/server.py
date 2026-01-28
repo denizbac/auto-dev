@@ -47,16 +47,6 @@ def parse_json_field(value):
     except (json.JSONDecodeError, TypeError):
         return value
 
-try:
-    import boto3
-    HAS_BOTO3 = True
-except ImportError:
-    HAS_BOTO3 = False
-
-# ECS configuration for Fargate deployment
-ECS_CLUSTER = os.environ.get('ECS_CLUSTER', 'auto-dev')
-USE_ECS = os.environ.get('USE_ECS', 'false').lower() == 'true'
-
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -595,7 +585,7 @@ async def api_agents():
 @app.post("/api/agent/start")
 async def start_agent():
     """Enable all agents via Redis (instant soft-pause control)."""
-    # Always use Redis for instant enable/disable (agents always running in ECS)
+    # Always use Redis for instant enable/disable (agents run continuously in KaaS)
     r = get_redis()
     if not r:
         return {"status": "error", "message": "Redis unavailable"}
@@ -611,29 +601,10 @@ async def start_agent():
         return {"status": "error", "message": str(e)}
 
 
-async def _start_all_agents_ecs():
-    """Start all agents via ECS API."""
-    try:
-        ecs = boto3.client('ecs')
-        started = []
-        for agent_type in AGENT_TYPES:
-            service_name = f"{ECS_CLUSTER}-{agent_type}"
-            ecs.update_service(
-                cluster=ECS_CLUSTER,
-                service=service_name,
-                desiredCount=1
-            )
-            started.append(agent_type)
-        return {"status": "started", "message": f"Started {len(started)} agents via ECS"}
-    except Exception as e:
-        logger.error(f"ECS start_all error: {e}")
-        return {"status": "error", "message": str(e)}
-
-
 @app.post("/api/agent/stop")
 async def stop_agent():
     """Disable all agents via Redis (instant soft-pause control)."""
-    # Always use Redis for instant enable/disable (agents always running in ECS)
+    # Always use Redis for instant enable/disable (agents run continuously in KaaS)
     r = get_redis()
     if not r:
         return {"status": "error", "message": "Redis unavailable"}
@@ -649,32 +620,13 @@ async def stop_agent():
         return {"status": "error", "message": str(e)}
 
 
-async def _stop_all_agents_ecs():
-    """Stop all agents via ECS API."""
-    try:
-        ecs = boto3.client('ecs')
-        stopped = []
-        for agent_type in AGENT_TYPES:
-            service_name = f"{ECS_CLUSTER}-{agent_type}"
-            ecs.update_service(
-                cluster=ECS_CLUSTER,
-                service=service_name,
-                desiredCount=0
-            )
-            stopped.append(agent_type)
-        return {"status": "stopped", "message": f"Stopped {len(stopped)} agents via ECS"}
-    except Exception as e:
-        logger.error(f"ECS stop_all error: {e}")
-        return {"status": "error", "message": str(e)}
-
-
 @app.post("/api/agent/start/{agent_type}")
 async def start_specific_agent(agent_type: str):
     """Enable a specific agent type via Redis (instant soft-pause control)."""
     if agent_type not in AGENT_TYPES:
         return {"status": "error", "message": f"Unknown agent type: {agent_type}"}
 
-    # Always use Redis for instant enable/disable (agents always running in ECS)
+    # Always use Redis for instant enable/disable (agents run continuously in KaaS)
     r = get_redis()
     if not r:
         return {"status": "error", "message": "Redis unavailable"}
@@ -689,29 +641,13 @@ async def start_specific_agent(agent_type: str):
         return {"status": "error", "message": str(e)}
 
 
-async def _start_agent_ecs(agent_type: str):
-    """Start a specific agent via ECS API."""
-    try:
-        ecs = boto3.client('ecs')
-        service_name = f"{ECS_CLUSTER}-{agent_type}"
-        ecs.update_service(
-            cluster=ECS_CLUSTER,
-            service=service_name,
-            desiredCount=1
-        )
-        return {"status": "started", "message": f"{agent_type} agent started via ECS"}
-    except Exception as e:
-        logger.error(f"ECS start error for {agent_type}: {e}")
-        return {"status": "error", "message": str(e)}
-
-
 @app.post("/api/agent/stop/{agent_type}")
 async def stop_specific_agent(agent_type: str):
     """Disable a specific agent type via Redis (instant soft-pause control)."""
     if agent_type not in AGENT_TYPES:
         return {"status": "error", "message": f"Unknown agent type: {agent_type}"}
 
-    # Always use Redis for instant enable/disable (agents always running in ECS)
+    # Always use Redis for instant enable/disable (agents run continuously in KaaS)
     r = get_redis()
     if not r:
         return {"status": "error", "message": "Redis unavailable"}
@@ -723,22 +659,6 @@ async def stop_specific_agent(agent_type: str):
         r.publish("agent:control", json.dumps({"action": "stop", "agent": agent_type}))
         return {"status": "stopped", "message": f"{agent_type} agent disabled"}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-async def _stop_agent_ecs(agent_type: str):
-    """Stop a specific agent via ECS API."""
-    try:
-        ecs = boto3.client('ecs')
-        service_name = f"{ECS_CLUSTER}-{agent_type}"
-        ecs.update_service(
-            cluster=ECS_CLUSTER,
-            service=service_name,
-            desiredCount=0
-        )
-        return {"status": "stopped", "message": f"{agent_type} agent stopped via ECS"}
-    except Exception as e:
-        logger.error(f"ECS stop error for {agent_type}: {e}")
         return {"status": "error", "message": str(e)}
 
 
@@ -1566,12 +1486,7 @@ async def get_learnings(
 
 @app.get("/api/agent-statuses")
 async def get_agent_statuses():
-    """Get status of all agents (ECS or database based on deployment mode)."""
-    # Use ECS API if in ECS mode
-    if USE_ECS and HAS_BOTO3:
-        return await _get_agent_statuses_ecs()
-
-    # Fallback to database/Redis based status
+    """Get status of all agents (Redis + database)."""
     conn = get_orchestrator_db()
     r = get_redis()
     statuses = {}
@@ -1645,93 +1560,6 @@ async def get_agent_statuses():
     return {"agents": statuses, "rate_limit": rate_limit_info}
 
 
-async def _get_agent_statuses_ecs():
-    """Get agent statuses from ECS services + Redis enabled state."""
-    statuses = {}
-
-    # Initialize with defaults (all agents run continuously)
-    for agent_type in AGENT_TYPES:
-        statuses[agent_type] = {
-            "agent_id": agent_type,
-            "status": "offline",
-            "enabled": True,  # Default to enabled
-            "current_task_id": None,
-            "tasks_completed": 0,
-            "tokens_used": 0,
-            "running_count": 0,
-            "desired_count": 1
-        }
-
-    # Get enabled state from Redis (soft pause control)
-    r = get_redis()
-    if r:
-        try:
-            for agent_type in AGENT_TYPES:
-                enabled = r.get(f"agent:{agent_type}:enabled")
-                # If key doesn't exist, default to enabled (None means enabled)
-                statuses[agent_type]["enabled"] = enabled is None or enabled == b"1"
-        except Exception as e:
-            logger.error(f"Redis error getting agent states: {e}")
-
-    try:
-        ecs = boto3.client('ecs')
-        service_names = [f"{ECS_CLUSTER}-{agent}" for agent in AGENT_TYPES]
-
-        # Get service status from ECS
-        response = ecs.describe_services(
-            cluster=ECS_CLUSTER,
-            services=service_names
-        )
-
-        for svc in response.get('services', []):
-            # Extract agent type from service name
-            service_name = svc['serviceName']
-            agent_type = service_name.replace(f"{ECS_CLUSTER}-", "")
-
-            if agent_type in statuses:
-                running = svc.get('runningCount', 0)
-                desired = svc.get('desiredCount', 0)
-                enabled = statuses[agent_type]["enabled"]
-
-                # Determine status based on ECS state + Redis enabled
-                if running > 0:
-                    status = "online" if enabled else "paused"
-                elif desired > 0:
-                    status = "starting"
-                else:
-                    status = "offline"
-
-                statuses[agent_type].update({
-                    "status": status,
-                    "running_count": running,
-                    "desired_count": desired
-                })
-
-    except Exception as e:
-        logger.error(f"Error getting ECS agent statuses: {e}")
-
-    # Also check database for task stats
-    conn = get_orchestrator_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT assigned_agent, COUNT(*) as completed
-                FROM tasks
-                WHERE status = 'completed'
-                GROUP BY assigned_agent
-            """)
-            for row in cursor.fetchall():
-                row_dict = dict(row)
-                agent_id = row_dict.get('assigned_agent')
-                if agent_id in statuses:
-                    statuses[agent_id]['tasks_completed'] = row_dict.get('completed', 0)
-        except Exception as e:
-            logger.debug(f"Error getting task stats: {e}")
-        finally:
-            conn.close()
-
-    return {"agents": statuses, "rate_limit": None}
 
 
 @app.get("/api/agent-providers")

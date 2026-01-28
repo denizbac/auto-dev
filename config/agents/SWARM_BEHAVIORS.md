@@ -134,11 +134,12 @@ The PM agent creates detailed specifications before Builder starts work:
 
 ### For PM:
 - Read the idea carefully and create a detailed spec
-- Save spec to `/autonomous-claude/data/specs/{product-slug}.md`
-- Create `build_product` task with `spec_path` in the payload
+- Save spec to the GitLab issue and include a short summary in the task payload
+- If writing a local spec file, note it is per-pod (not shared across agents)
+- Create `build_product` task with `spec_summary` (and optional `spec_path`)
 
 ### For Builder:
-- ALWAYS read the spec before building: `cat /autonomous-claude/data/specs/<slug>.md`
+- ALWAYS read the spec from the GitLab issue (and `spec_summary` in task payload)
 - Follow the Requirements section closely
 - If something is unclear, ask PM before guessing
 - When complete, create `code_review` task for Reviewer (NOT test_product)

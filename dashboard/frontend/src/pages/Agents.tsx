@@ -111,7 +111,7 @@ export default function Agents() {
           const status = agentStatuses?.agents?.[agent.id]
           const agentStatus = status?.status
           const isEnabled = status?.enabled !== false
-          // Agent is "running" if it's processing tasks (enabled + ECS running)
+          // Agent is "running" if it's processing tasks (enabled + heartbeat)
           const isRunning = isEnabled && (agentStatus === 'online' || agentStatus === 'running' || agentStatus === 'working' || agentStatus === 'idle' || agentStatus === 'rate_limited')
           const taskSummary = agentTasks?.summary?.[agent.id]
           const currentProvider = getProviderForAgent(agent.id)

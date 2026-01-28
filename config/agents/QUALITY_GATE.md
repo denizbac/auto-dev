@@ -25,11 +25,11 @@ Builder → Reviewer → Tester → Human Approval → Publisher
 
 ```bash
 # Check if code review exists and passed
-cat /autonomous-claude/data/projects/PRODUCT_NAME/REVIEW_REPORT.md | grep -i "status\|verdict"
+cat /auto-dev/data/projects/PRODUCT_NAME/REVIEW_REPORT.md | grep -i "status\|verdict"
 # Must see: Status: APPROVED or Verdict: APPROVED
 
 # Check if test exists and passed
-cat /autonomous-claude/data/projects/PRODUCT_NAME/TEST_REPORT.md | grep -i status
+cat /auto-dev/data/projects/PRODUCT_NAME/TEST_REPORT.md | grep -i status
 # Must see: Status: PASS
 
 # If either is FAIL or missing → do not publish!
@@ -57,7 +57,7 @@ If any check fails, create appropriate task instead of publishing.
 3. **Daily limits**: Max 3 GitHub repos, 5 npm packages, 2 Gumroad products per day
 4. **Never skip verification** - even for "quick" publishes
 
-See `/autonomous-claude/config/settings.yaml` for rate_limits configuration.
+See `/auto-dev/config/settings.yaml` for rate_limits configuration.
 
 ## 🚫 PROHIBITED (Blocks the Whole Pipeline)
 

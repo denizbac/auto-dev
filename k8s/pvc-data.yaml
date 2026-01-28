@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: auto-dev-dashboard-data
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: auto-dev-scheduler-data
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: auto-dev-agent-pm-data
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: auto-dev-agent-architect-data
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: auto-dev-agent-builder-data
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: auto-dev-agent-reviewer-data
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: auto-dev-agent-tester-data
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: auto-dev-agent-security-data
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: auto-dev-agent-devops-data
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: auto-dev-agent-bug-finder-data
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

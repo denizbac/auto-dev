@@ -16,7 +16,7 @@ gitlab:
   auto_labels:
     - "auto-dev"
     - "needs-review"
-  # Credentials stored in SSM: /auto-dev/{repo-slug}/gitlab-token
+  # Credentials stored in Secrets Manager: auto-dev/{repo-slug}/gitlab-token
 
 # LLM Provider Configuration
 llm:
@@ -185,7 +185,7 @@ database:
   port: 5432
   name: "autodev"
   user: "${DB_USER:-autodev}"
-  password_env: "DB_PASSWORD"  # Or use SSM: /auto-dev/db/password
+  password_env: "DB_PASSWORD"  # Or use Secrets Manager: auto-dev/db-password
 
 # Memory settings
 memory:

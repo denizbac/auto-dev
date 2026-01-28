@@ -8,7 +8,7 @@ Usage:
     gumroad-publish test
 
 Examples:
-    gumroad-publish /autonomous-claude/data/projects/github-actions-premium-pack
+    gumroad-publish /auto-dev/data/projects/github-actions-premium-pack
     gumroad-publish list
 """
 

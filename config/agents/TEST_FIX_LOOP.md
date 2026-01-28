@@ -15,7 +15,7 @@ claude-tasks submit-approval \
   --type "product" \
   --platform "gumroad|github|npm" \
   --description "Validated product ready for human approval" \
-  --files "/autonomous-claude/data/projects/PRODUCT_NAME" \
+  --files "/auto-dev/data/projects/PRODUCT_NAME" \
   --from tester
 ```
 
@@ -34,7 +34,7 @@ After receiving fix_product task:
 
 ```bash
 claude-tasks create --type test_product --to tester --priority 9 \
-  --payload '{"product": "PRODUCT_NAME", "path": "/autonomous-claude/data/projects/PRODUCT_NAME", "retest": true}'
+  --payload '{"product": "PRODUCT_NAME", "path": "/auto-dev/data/projects/PRODUCT_NAME", "retest": true}'
 ```
 
 ## Publisher Actions

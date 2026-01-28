@@ -1,0 +1,61 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  K8S_NAMESPACE: autodev
+
+build:
+  image: gcr.io/kaniko-project/executor:debug
+  stage: build
+  script:
+    - mkdir -p /kaniko/.docker
+    - |
+      cat > /kaniko/.docker/config.json <<EOF
+      {"auths":{"$CI_REGISTRY":{"username":"$CI_REGISTRY_USER","password":"$CI_REGISTRY_PASSWORD"}}}
+      EOF
+    - /kaniko/executor --context "$CI_PROJECT_DIR" --dockerfile "$CI_PROJECT_DIR/Dockerfile" --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" --destination "$CI_REGISTRY_IMAGE:latest" --cache=true
+  only:
+    - main
+
+deploy:
+  image: bitnami/kubectl:1.29
+  stage: deploy
+  script:
+    - echo "$KUBE_CONFIG_B64" | base64 -d > kubeconfig
+    - export KUBECONFIG=$PWD/kubeconfig
+    - kubectl apply -k k8s/
+    - |
+      for deploy in \
+        auto-dev-dashboard \
+        auto-dev-webhook \
+        auto-dev-scheduler \
+        auto-dev-agent-pm \
+        auto-dev-agent-architect \
+        auto-dev-agent-builder \
+        auto-dev-agent-reviewer \
+        auto-dev-agent-tester \
+        auto-dev-agent-security \
+        auto-dev-agent-devops \
+        auto-dev-agent-bug-finder; do
+          kubectl set image "deployment/${deploy}" auto-dev="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" -n "$K8S_NAMESPACE"
+      done
+    - |
+      for deploy in \
+        auto-dev-dashboard \
+        auto-dev-webhook \
+        auto-dev-scheduler \
+        auto-dev-agent-pm \
+        auto-dev-agent-architect \
+        auto-dev-agent-builder \
+        auto-dev-agent-reviewer \
+        auto-dev-agent-tester \
+        auto-dev-agent-security \
+        auto-dev-agent-devops \
+        auto-dev-agent-bug-finder; do
+          kubectl rollout status "deployment/${deploy}" -n "$K8S_NAMESPACE"
+      done
+  environment:
+    name: production
+  only:
+    - main

@@ -35,7 +35,7 @@ except ImportError:
 import sqlite3
 
 # Configuration
-ORCHESTRATOR_DB = os.environ.get('ORCHESTRATOR_DB', '/autonomous-claude/data/orchestrator.db')
+ORCHESTRATOR_DB = os.environ.get('ORCHESTRATOR_DB', '/auto-dev/data/orchestrator.db')
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
 
 # Task types

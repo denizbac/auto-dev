@@ -4,7 +4,7 @@ Daily Summary Script for Autonomous Claude Swarm
 ================================================
 
 Sends a daily summary to Slack with yesterday's activity.
-Run via cron at 9am: 0 9 * * * /autonomous-claude/venv/bin/python /autonomous-claude/scripts/daily_summary.py
+Run via cron at 9am: 0 9 * * * /auto-dev/venv/bin/python /auto-dev/scripts/daily_summary.py
 
 """
 
@@ -22,7 +22,7 @@ from dashboard.slack_notifications import send_slack_message
 
 def get_daily_stats():
     """Get statistics for the last 24 hours."""
-    db_path = "/autonomous-claude/data/orchestrator.db"
+    db_path = "/auto-dev/data/orchestrator.db"
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
     
     stats = {
