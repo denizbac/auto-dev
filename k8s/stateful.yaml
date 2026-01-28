@@ -24,6 +24,13 @@ spec:
       containers:
         - name: postgres
           image: registry.nimbus.amgen.com/dbac/autodev/postgres:16
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
           ports:
             - containerPort: 5432
           env:
@@ -75,6 +82,13 @@ spec:
       containers:
         - name: redis
           image: registry.nimbus.amgen.com/dbac/autodev/redis:7
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
           ports:
             - containerPort: 6379
           volumeMounts:
@@ -116,6 +130,13 @@ spec:
       containers:
         - name: qdrant
           image: registry.nimbus.amgen.com/dbac/autodev/qdrant:latest
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
           ports:
             - containerPort: 6333
           volumeMounts:

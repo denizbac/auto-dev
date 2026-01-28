@@ -24,6 +24,13 @@ spec:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           command: ["python", "-m", "dashboard.server"]
           ports:
             - containerPort: 8080
@@ -78,6 +85,13 @@ spec:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           command: ["python", "-m", "integrations.webhook_server"]
           ports:
             - containerPort: 8081
@@ -125,6 +139,13 @@ spec:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           command: ["python", "-m", "watcher.scheduler"]
           envFrom:
             - configMapRef:
@@ -165,6 +186,13 @@ spec:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           command: ["python", "-m", "watcher.agent_runner", "--agent", "pm"]
           envFrom:
             - configMapRef:
@@ -205,6 +233,13 @@ spec:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           command: ["python", "-m", "watcher.agent_runner", "--agent", "architect"]
           envFrom:
             - configMapRef:
@@ -245,6 +280,13 @@ spec:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           command: ["python", "-m", "watcher.agent_runner", "--agent", "builder"]
           envFrom:
             - configMapRef:
@@ -285,6 +327,13 @@ spec:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           command: ["python", "-m", "watcher.agent_runner", "--agent", "reviewer"]
           envFrom:
             - configMapRef:
@@ -325,6 +374,13 @@ spec:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           command: ["python", "-m", "watcher.agent_runner", "--agent", "tester"]
           envFrom:
             - configMapRef:
@@ -365,6 +421,13 @@ spec:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           command: ["python", "-m", "watcher.agent_runner", "--agent", "security"]
           envFrom:
             - configMapRef:
@@ -405,6 +468,13 @@ spec:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           command: ["python", "-m", "watcher.agent_runner", "--agent", "devops"]
           envFrom:
             - configMapRef:
@@ -445,6 +515,13 @@ spec:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
           command: ["python", "-m", "watcher.agent_runner", "--agent", "bug_finder"]
           envFrom:
             - configMapRef:
