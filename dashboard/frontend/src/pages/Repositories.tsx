@@ -75,7 +75,7 @@ export default function Repositories() {
 
   const handleProviderChange = (provider: 'gitlab' | 'github') => {
     setNewRepoProvider(provider)
-    setNewRepoUrl(provider === 'github' ? 'https://github.com' : 'https://gitlab.com')
+    setNewRepoUrl(provider === 'github' ? 'https://github.com' : 'https://gitlab.nimbus.amgen.com')
   }
 
   const handleAddRepo = () => {
