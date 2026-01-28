@@ -46,6 +46,11 @@ export const createRepo = (data: CreateRepoRequest) =>
     method: 'POST',
     body: JSON.stringify(data),
   })
+export const updateRepo = (repoId: string, data: Partial<UpdateRepoRequest>) =>
+  fetchAPI<ActionResponse>(`/repos/${repoId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
 
 // Tasks
 export const getTasks = (status?: string) =>
@@ -222,6 +227,14 @@ export interface CreateRepoRequest {
   gitlab_project_id: string
   default_branch?: string
   autonomy_mode?: 'full' | 'guided'
+}
+
+export interface UpdateRepoRequest {
+  name?: string
+  default_branch?: string
+  autonomy_mode?: 'full' | 'guided'
+  active?: boolean
+  settings?: Record<string, unknown>
 }
 
 export interface Task {

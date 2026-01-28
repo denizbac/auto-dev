@@ -65,6 +65,14 @@ export default function Repositories() {
     },
   })
 
+  const updateRepoMutation = useMutation({
+    mutationFn: (payload: { repoId: string; active: boolean }) =>
+      updateRepo(payload.repoId, { active: payload.active }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['repos'] })
+    },
+  })
+
   const resetForm = () => {
     setNewRepoName('')
     setNewRepoProvider('github')
@@ -251,6 +259,19 @@ export default function Repositories() {
                       <ExternalLink className="h-3 w-3" />
                       Open in {repo.provider === 'github' ? 'GitHub' : 'GitLab'}
                     </a>
+                  </div>
+                  <div className="mt-3">
+                    <Button
+                      size="sm"
+                      variant={repo.active ? 'destructive' : 'default'}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        updateRepoMutation.mutate({ repoId: repo.id, active: !repo.active })
+                      }}
+                      disabled={updateRepoMutation.isPending}
+                    >
+                      {repo.active ? 'Deactivate' : 'Activate'}
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
