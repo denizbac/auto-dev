@@ -20,6 +20,10 @@ spec:
     spec:
       imagePullSecrets:
         - name: auto-dev-registry-cred
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
@@ -81,6 +85,10 @@ spec:
     spec:
       imagePullSecrets:
         - name: auto-dev-registry-cred
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
@@ -135,6 +143,10 @@ spec:
     spec:
       imagePullSecrets:
         - name: auto-dev-registry-cred
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
@@ -182,6 +194,10 @@ spec:
     spec:
       imagePullSecrets:
         - name: auto-dev-registry-cred
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
@@ -229,6 +245,10 @@ spec:
     spec:
       imagePullSecrets:
         - name: auto-dev-registry-cred
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
@@ -276,6 +296,10 @@ spec:
     spec:
       imagePullSecrets:
         - name: auto-dev-registry-cred
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
@@ -323,6 +347,10 @@ spec:
     spec:
       imagePullSecrets:
         - name: auto-dev-registry-cred
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
@@ -370,6 +398,10 @@ spec:
     spec:
       imagePullSecrets:
         - name: auto-dev-registry-cred
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
@@ -417,6 +449,10 @@ spec:
     spec:
       imagePullSecrets:
         - name: auto-dev-registry-cred
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
@@ -464,6 +500,10 @@ spec:
     spec:
       imagePullSecrets:
         - name: auto-dev-registry-cred
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest
@@ -511,6 +551,10 @@ spec:
     spec:
       imagePullSecrets:
         - name: auto-dev-registry-cred
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: auto-dev
           image: registry.nimbus.amgen.com/dbac/autodev:latest

@@ -1240,24 +1240,35 @@ class MultiTenantOrchestrator:
                 }
                 status = status_map.get(status, 'idle')
 
-                # PostgreSQL schema uses agent_type instead of agent_id
-                # Check if record exists first
-                cursor.execute(f"""
-                    SELECT id FROM agent_status WHERE agent_type = {p}
-                """, (agent_id,))
+                # Check if record exists first (match repo_id when provided)
+                if repo_id is None:
+                    cursor.execute(f"""
+                        SELECT id FROM agent_status WHERE agent_id = {p} AND repo_id IS NULL
+                    """, (agent_id,))
+                else:
+                    cursor.execute(f"""
+                        SELECT id FROM agent_status WHERE agent_id = {p} AND repo_id = {p}
+                    """, (agent_id, repo_id))
                 existing = cursor.fetchone()
 
                 if existing:
-                    cursor.execute(f"""
-                        UPDATE agent_status
-                        SET status = {p}, current_task_id = {p}, last_heartbeat = {p}
-                        WHERE agent_type = {p}
-                    """, (status, current_task_id, now, agent_id))
+                    if repo_id is None:
+                        cursor.execute(f"""
+                            UPDATE agent_status
+                            SET status = {p}, current_task_id = {p}, last_heartbeat = {p}
+                            WHERE agent_id = {p} AND repo_id IS NULL
+                        """, (status, current_task_id, now, agent_id))
+                    else:
+                        cursor.execute(f"""
+                            UPDATE agent_status
+                            SET status = {p}, current_task_id = {p}, last_heartbeat = {p}
+                            WHERE agent_id = {p} AND repo_id = {p}
+                        """, (status, current_task_id, now, agent_id, repo_id))
                 else:
                     cursor.execute(f"""
-                        INSERT INTO agent_status (id, agent_type, status, current_task_id, last_heartbeat, metadata)
+                        INSERT INTO agent_status (id, agent_id, repo_id, status, current_task_id, last_heartbeat)
                         VALUES ({p}, {p}, {p}, {p}, {p}, {p})
-                    """, (str(uuid.uuid4()), agent_id, status, current_task_id, now, '{}'))
+                    """, (str(uuid.uuid4()), agent_id, repo_id, status, current_task_id, now))
             else:
                 # SQLite schema
                 cursor.execute(f"""
@@ -1271,8 +1282,8 @@ class MultiTenantOrchestrator:
 
     def get_agent_status(self, agent_id: str, repo_id: Optional[str] = None) -> Optional[Dict]:
         """Get agent status."""
-        # Use agent_type for PostgreSQL, agent_id for SQLite
-        col = 'agent_type' if self.db.db_type == 'postgresql' else 'agent_id'
+        # Schema uses agent_id for both SQLite and PostgreSQL
+        col = 'agent_id'
 
         if repo_id:
             row = self.db.execute_one(f"""

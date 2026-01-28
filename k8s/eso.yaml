@@ -47,15 +47,6 @@ spec:
     - secretKey: DB_PASSWORD
       remoteRef:
         key: auto-dev/db-password
-    - secretKey: GITLAB_TOKEN
-      remoteRef:
-        key: auto-dev/gitlab-token
-    - secretKey: GITLAB_WEBHOOK_SECRET
-      remoteRef:
-        key: auto-dev/gitlab-webhook-secret
-    - secretKey: CODEX_API_KEY
-      remoteRef:
-        key: auto-dev/codex-api-key
     - secretKey: ANTHROPIC_API_KEY
       remoteRef:
         key: auto-dev/anthropic-api-key
