@@ -19,9 +19,11 @@ spec:
         team: ois
         costcenter: "14866"
     spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
       containers:
         - name: postgres
-          image: docker.io/library/postgres:16
+          image: registry.nimbus.amgen.com/dbac/autodev/postgres:16
           ports:
             - containerPort: 5432
           env:
@@ -68,9 +70,11 @@ spec:
         team: ois
         costcenter: "14866"
     spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
       containers:
         - name: redis
-          image: docker.io/library/redis:7
+          image: registry.nimbus.amgen.com/dbac/autodev/redis:7
           ports:
             - containerPort: 6379
           volumeMounts:
@@ -107,9 +111,11 @@ spec:
         team: ois
         costcenter: "14866"
     spec:
+      imagePullSecrets:
+        - name: auto-dev-registry-cred
       containers:
         - name: qdrant
-          image: docker.io/qdrant/qdrant:v1.11.4
+          image: registry.nimbus.amgen.com/dbac/autodev/qdrant:latest
           ports:
             - containerPort: 6333
           volumeMounts:
