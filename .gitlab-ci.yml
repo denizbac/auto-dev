@@ -12,7 +12,10 @@ build:
     - mkdir -p /kaniko/.docker
     - |
       cat > /kaniko/.docker/config.json <<EOF
-      {"auths":{"$CI_REGISTRY":{"username":"$CI_REGISTRY_USER","password":"$CI_REGISTRY_PASSWORD"}}}
+      {"auths":{
+        "$CI_REGISTRY":{"username":"$CI_REGISTRY_USER","password":"$CI_REGISTRY_PASSWORD"},
+        "https://index.docker.io/v1/":{"username":"$DOCKERHUB_USERNAME","password":"$DOCKERHUB_TOKEN"}
+      }}
       EOF
     - /kaniko/executor --context "$CI_PROJECT_DIR" --dockerfile "$CI_PROJECT_DIR/Dockerfile" --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" --destination "$CI_REGISTRY_IMAGE:latest" --cache=true
   only:
