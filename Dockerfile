@@ -3,7 +3,7 @@
 # Multi-stage build for minimal production image
 
 # Stage 1: Python dependencies builder
-FROM python:3.11-slim as python-builder
+FROM registry.nimbus.amgen.com/dbac/autodev/python:3.11-slim as python-builder
 
 WORKDIR /build
 
@@ -18,7 +18,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Stage 2: React frontend builder
-FROM node:20-slim as frontend-builder
+FROM registry.nimbus.amgen.com/dbac/autodev/node:20-slim as frontend-builder
 
 WORKDIR /app
 
@@ -35,7 +35,7 @@ COPY dashboard/frontend/ ./
 RUN npm run build
 
 # Stage 3: Production image
-FROM python:3.11-slim
+FROM registry.nimbus.amgen.com/dbac/autodev/python:3.11-slim
 
 WORKDIR /auto-dev
 
