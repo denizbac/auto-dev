@@ -415,6 +415,9 @@ class MultiTenantOrchestrator:
                     updated_at TEXT NOT NULL
                 )
             """)
+            # Migrations: add missing columns used by newer code paths
+            cursor.execute("ALTER TABLE repos ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'gitlab'")
+            cursor.execute("ALTER TABLE repos ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true")
 
             # Migration: Convert tasks columns from UUID to TEXT if needed
             if self.db.db_type == 'postgresql':
