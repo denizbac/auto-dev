@@ -4,6 +4,8 @@
 .env.*
 !.env.template
 !.env.example
+config.yaml
+kaas-cluster-1-config.yaml
 
 # Terraform
 terraform/.terraform/
@@ -12,6 +14,11 @@ terraform/*.tfstate.*
 terraform/*.tfvars
 terraform/.terraform.lock.hcl
 !terraform/terraform.tfvars.example
+infra/**/.terraform/
+infra/**/.terraform.lock.hcl
+infra/**/terraform.tfstate
+infra/**/terraform.tfstate.*
+infra/**/tfplan
 
 # Python
 __pycache__/

@@ -165,11 +165,10 @@ database:
 # Store in environment
 export GITLAB_TOKEN="your-token"
 
-# Or use AWS SSM (production)
-aws ssm put-parameter \
-  --name "/auto-dev/your-repo/gitlab-token" \
-  --value "your-token" \
-  --type SecureString
+# Or use AWS Secrets Manager (production, via ESO)
+aws secretsmanager create-secret \
+  --name "auto-dev/gitlab-token" \
+  --secret-string "your-token"
 ```
 
 ### Set Up GitLab Webhook Secret
@@ -178,11 +177,10 @@ aws ssm put-parameter \
 # Store in environment
 export GITLAB_WEBHOOK_SECRET="your-webhook-secret"
 
-# Or use AWS SSM (production)
-aws ssm put-parameter \
-  --name "/auto-dev/gitlab-webhook-secret" \
-  --value "your-webhook-secret" \
-  --type SecureString
+# Or use AWS Secrets Manager (production, via ESO)
+aws secretsmanager create-secret \
+  --name "auto-dev/gitlab-webhook-secret" \
+  --secret-string "your-webhook-secret"
 ```
 
 ### Start the System
@@ -200,6 +198,40 @@ python -m watcher.agent_runner --agent architect
 python -m watcher.agent_runner --agent builder
 # ... etc for other agents
 ```
+
+## Deployment (KaaS / EKS)
+
+Production deployments run on the shared KaaS cluster.
+
+Key requirements:
+- Ingress class: `nginx`
+- Host must be `*.kaas.nimbus.amgen.com`
+- Cilium NetworkPolicy required (default-deny)
+- Secrets managed via ESO + AWS Secrets Manager
+- `/auto-dev/data` is persisted per-deployment (EBS PVCs, not shared across pods)
+
+Manifests live in `k8s/` and are applied locally for now:
+
+```bash
+kubectl apply -k k8s/
+kubectl rollout status deployment/auto-dev-dashboard -n <namespace>
+```
+
+KaaS pulls images using a Kubernetes image pull secret named `auto-dev-registry-cred`.
+Create it with your GitLab creds (PAT with `read_registry`):
+
+```bash
+kubectl create secret docker-registry auto-dev-registry-cred \
+  --docker-server=<gitlab-registry-host> \
+  --docker-username=<gitlab-username> \
+  --docker-password=<gitlab-pat> \
+  --docker-email=<email> \
+  -n <namespace>
+```
+
+Optional GitLab CI deploys:
+- `KUBE_CONFIG_B64` (base64-encoded kubeconfig)
+- `K8S_NAMESPACE` (default: `autodev`)
 
 ### Add a Repository
 
@@ -349,6 +381,7 @@ Same flow but approvals auto-pass if thresholds are met:
 ├── dashboard/
 │   ├── server.py          # FastAPI dashboard
 │   └── repos.py           # Repo management API
+├── k8s/                   # KaaS/EKS manifests
 └── data/
     ├── workspaces/        # Cloned repos
     ├── specs/             # Specifications
@@ -458,7 +491,7 @@ psql -d autodev -c "SELECT 1"
 - Secret is only shown in full when first generated
 
 ### Credentials
-- GitLab tokens stored in AWS SSM: `/auto-dev/{repo-slug}/gitlab-token`
+- GitLab tokens stored in AWS Secrets Manager: `auto-dev/{repo-slug}/gitlab-token`
 - Never commit secrets to repositories
 
 ### Pinned Dependencies

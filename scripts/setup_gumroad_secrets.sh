@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup Gumroad credentials in AWS SSM Parameter Store
+# Setup Gumroad credentials in AWS Secrets Manager
 # Usage: ./setup_gumroad_secrets.sh <email> <password>
 
 set -e
@@ -11,30 +11,34 @@ fi
 
 GUMROAD_EMAIL="$1"
 GUMROAD_PASSWORD="$2"
+REGION="${AWS_REGION:-us-west-2}"
 
-echo "Storing Gumroad credentials in SSM Parameter Store..."
+echo "Storing Gumroad credentials in Secrets Manager..."
 
-# Store email (encrypted)
-aws ssm put-parameter \
-    --name "/auto-dev/gumroad/email" \
-    --value "$GUMROAD_EMAIL" \
-    --type "SecureString" \
-    --overwrite \
-    --region us-east-1
+create_or_update_secret() {
+    local name="$1"
+    local value="$2"
 
-# Store password (encrypted)
-aws ssm put-parameter \
-    --name "/auto-dev/gumroad/password" \
-    --value "$GUMROAD_PASSWORD" \
-    --type "SecureString" \
-    --overwrite \
-    --region us-east-1
+    if aws secretsmanager describe-secret --secret-id "$name" --region "$REGION" >/dev/null 2>&1; then
+        aws secretsmanager put-secret-value \
+            --secret-id "$name" \
+            --secret-string "$value" \
+            --region "$REGION"
+    else
+        aws secretsmanager create-secret \
+            --name "$name" \
+            --secret-string "$value" \
+            --region "$REGION"
+    fi
+}
+
+create_or_update_secret "auto-dev/gumroad/email" "$GUMROAD_EMAIL"
+create_or_update_secret "auto-dev/gumroad/password" "$GUMROAD_PASSWORD"
 
 echo "✅ Gumroad credentials stored successfully!"
 echo ""
-echo "Parameters created:"
-echo "  /auto-dev/gumroad/email"
-echo "  /auto-dev/gumroad/password"
+echo "Secrets created/updated:"
+echo "  auto-dev/gumroad/email"
+echo "  auto-dev/gumroad/password"
 echo ""
-echo "To verify: aws ssm get-parameter --name '/auto-dev/gumroad/email' --with-decryption --region us-east-1"
-
+echo "To verify: aws secretsmanager get-secret-value --secret-id 'auto-dev/gumroad/email' --region $REGION"

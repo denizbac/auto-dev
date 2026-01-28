@@ -154,6 +154,7 @@ deploy:
 # .gitlab-ci.yml
 variables:
   DOCKER_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+  K8S_NAMESPACE: autodev
 
 stages:
   - build
@@ -164,49 +165,53 @@ stages:
 build:
   stage: build
   script:
-    - docker build -t $DOCKER_IMAGE .
+    - docker build -t $DOCKER_IMAGE -t $CI_REGISTRY_IMAGE:latest .
     - docker push $DOCKER_IMAGE
+    - docker push $CI_REGISTRY_IMAGE:latest
 
 test:
   stage: test
   script:
     - pytest --cov=app tests/
-  coverage: '/TOTAL.*\s+(\d+%)$/'
-
-deploy_staging:
-  stage: deploy
-  script:
-    - deploy.sh staging
-  environment:
-    name: staging
-  only:
-    - main
+  coverage: '/TOTAL.*\s+(\\d+%)$/'
 
 deploy_production:
   stage: deploy
+  image: bitnami/kubectl:latest
   script:
-    - deploy.sh production
+    - echo \"$KUBE_CONFIG_B64\" | base64 -d > kubeconfig
+    - export KUBECONFIG=$PWD/kubeconfig
+    - kubectl apply -k k8s/
+    - kubectl set image deployment/auto-dev-dashboard auto-dev=$DOCKER_IMAGE -n $K8S_NAMESPACE
+    - kubectl rollout status deployment/auto-dev-dashboard -n $K8S_NAMESPACE
   environment:
     name: production
-  when: manual
   only:
     - main
 ```
 
-### Terraform Example
+### Kubernetes Example
 
-```hcl
-resource "aws_ecs_service" "app" {
-  name            = "auto-dev-app"
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.app.arn
-  desired_count   = var.instance_count
-
-  deployment_configuration {
-    maximum_percent         = 200
-    minimum_healthy_percent = 100
-  }
-}
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-dev-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-dev-dashboard
+  template:
+    metadata:
+      labels:
+        app: auto-dev-dashboard
+    spec:
+      containers:
+        - name: auto-dev
+          image: auto-dev:latest
+          ports:
+            - containerPort: 8080
 ```
 
 ## Monitoring & Alerting
@@ -297,10 +302,11 @@ cache:
 # Use GitLab CI variables (masked + protected)
 deploy:
   script:
-    - echo "$DEPLOY_KEY" > key.pem
-    - deploy.sh --key key.pem
+    - echo "$KUBE_CONFIG_B64" | base64 -d > kubeconfig
+    - export KUBECONFIG=$PWD/kubeconfig
+    - kubectl apply -k k8s/
   after_script:
-    - rm -f key.pem  # Clean up
+    - rm -f kubeconfig  # Clean up
 ```
 
 Never commit secrets to the repository.

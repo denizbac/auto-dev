@@ -1,0 +1,63 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_DRIVER: overlay2
+  K8S_NAMESPACE: autodev
+
+build:
+  image: docker:24
+  services:
+    - docker:24-dind
+  stage: build
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" -t "$CI_REGISTRY_IMAGE:latest" .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    - docker push "$CI_REGISTRY_IMAGE:latest"
+  only:
+    - main
+
+deploy:
+  image: bitnami/kubectl:1.29
+  stage: deploy
+  script:
+    - echo "$KUBE_CONFIG_B64" | base64 -d > kubeconfig
+    - export KUBECONFIG=$PWD/kubeconfig
+    - kubectl apply -k k8s/
+    - |
+      for deploy in \
+        auto-dev-dashboard \
+        auto-dev-webhook \
+        auto-dev-scheduler \
+        auto-dev-agent-pm \
+        auto-dev-agent-architect \
+        auto-dev-agent-builder \
+        auto-dev-agent-reviewer \
+        auto-dev-agent-tester \
+        auto-dev-agent-security \
+        auto-dev-agent-devops \
+        auto-dev-agent-bug-finder; do
+          kubectl set image "deployment/${deploy}" auto-dev="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" -n "$K8S_NAMESPACE"
+      done
+    - |
+      for deploy in \
+        auto-dev-dashboard \
+        auto-dev-webhook \
+        auto-dev-scheduler \
+        auto-dev-agent-pm \
+        auto-dev-agent-architect \
+        auto-dev-agent-builder \
+        auto-dev-agent-reviewer \
+        auto-dev-agent-tester \
+        auto-dev-agent-security \
+        auto-dev-agent-devops \
+        auto-dev-agent-bug-finder; do
+          kubectl rollout status "deployment/${deploy}" -n "$K8S_NAMESPACE"
+      done
+  environment:
+    name: production
+  only:
+    - main

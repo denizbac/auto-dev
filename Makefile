@@ -30,8 +30,7 @@ help:
 	@echo "  db-reset    Reset database (WARNING: deletes all data)"
 	@echo ""
 	@echo "Deployment:"
-	@echo "  deploy      Deploy to EC2 (set EC2_IP=x.x.x.x)"
-	@echo "  deploy-docker  Deploy with Docker mode"
+	@echo "  k8s-apply   Apply KaaS manifests (requires kubeconfig)"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  clean       Clean temporary files"
@@ -140,23 +139,8 @@ endif
 # Deployment
 # =============================================================================
 
-EC2_IP ?= ""
-SSH_KEY ?= ~/.ssh/auto-dev.pem
-
-deploy:
-ifndef EC2_IP
-	@echo "Usage: make deploy EC2_IP=54.123.45.67"
-	@echo "       make deploy EC2_IP=54.123.45.67 SSH_KEY=~/.ssh/mykey.pem"
-else
-	./scripts/deploy.sh $(EC2_IP) $(SSH_KEY) --native
-endif
-
-deploy-docker:
-ifndef EC2_IP
-	@echo "Usage: make deploy-docker EC2_IP=54.123.45.67"
-else
-	./scripts/deploy.sh $(EC2_IP) $(SSH_KEY) --docker
-endif
+k8s-apply:
+	kubectl apply -k k8s/
 
 # =============================================================================
 # Maintenance

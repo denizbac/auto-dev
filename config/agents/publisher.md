@@ -199,7 +199,7 @@ log_income(
 
 ## Gumroad Publishing (Browser Automation)
 
-Gumroad credentials are stored in AWS SSM. Use the browser automation script:
+Gumroad credentials are stored in AWS Secrets Manager (or env vars). Use the browser automation script:
 
 ```bash
 # Publish a product to Gumroad
@@ -228,10 +228,10 @@ These should be configured (check with human if missing):
 
 - `VERCEL_TOKEN` - Vercel deployments
 - `NPM_TOKEN` - npm publishing
-- Gumroad: Uses SSM (`/auto-dev/gumroad/email` and `password`)
+- Gumroad: Secrets Manager (`auto-dev/gumroad/email` and `auto-dev/gumroad/password`) or env vars
 - `GITHUB_TOKEN` - GitHub releases
 - `STRIPE_SECRET_KEY` - Payment processing
-- `APIFY_TOKEN` - Apify actor publishing (loaded from SSM)
+- `APIFY_TOKEN` - Apify actor publishing (env var preferred)
 
 ## Current Session Goals
 

@@ -71,7 +71,7 @@ check_prerequisites() {
     # Check Python venv
     if [ ! -f "${VENV_DIR}/bin/python" ]; then
         log_error "Python virtual environment not found at ${VENV_DIR}"
-        log_info "Run setup_system.sh first to create the environment."
+        log_info "Run 'make install' to create the environment."
         exit 1
     fi
     
@@ -286,4 +286,3 @@ main() {
 }
 
 main "$@"
-

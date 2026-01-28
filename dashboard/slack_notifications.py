@@ -15,6 +15,7 @@ Usage:
 import subprocess
 import logging
 import json
+import os
 from typing import Optional
 from datetime import datetime
 from pathlib import Path
@@ -50,13 +51,12 @@ def get_ssm_parameter(name: str) -> Optional[str]:
 
 
 def get_bot_token() -> str:
-    return get_ssm_parameter("/auto-dev/slack/bot_token") or ""
+    return os.environ.get("SLACK_BOT_TOKEN") or get_ssm_parameter("/auto-dev/slack/bot_token") or ""
 
 
 def get_notification_channel() -> str:
     """Get the channel to post notifications to."""
-    # Try SSM first, fall back to default
-    channel = get_ssm_parameter("/auto-dev/slack/notification_channel")
+    channel = os.environ.get("SLACK_NOTIFICATION_CHANNEL") or get_ssm_parameter("/auto-dev/slack/notification_channel")
     if channel:
         return channel
     # Default to general or the first channel the bot is in
@@ -312,4 +312,3 @@ if __name__ == "__main__":
         notify_daily_summary(45, 3, 12, 2, 1)
     else:
         print(f"Unknown command: {cmd}")
-

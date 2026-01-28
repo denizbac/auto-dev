@@ -11,7 +11,7 @@ Auto-Dev is an autonomous software development system that uses 8 AI agents to d
 **IMPORTANT: Before committing any changes, review and update relevant documentation.**
 
 When you make changes to:
-- **Infrastructure** (terraform/, Dockerfile, docker-compose.yaml) → Update `OPERATIONS.md` and `ARCHITECTURE.md`
+- **Infrastructure** (k8s/, infra/iam, Dockerfile, docker-compose.yaml) → Update `OPERATIONS.md` and `ARCHITECTURE.md`
 - **Agent behavior** (watcher/, config/agents/) → Update `ARCHITECTURE.md` and agent task tables in `README.md`
 - **API endpoints** (dashboard/server.py) → Update API section in `README.md`
 - **Configuration** (config/settings.yaml) → Update relevant config sections in docs
@@ -40,30 +40,17 @@ createdb autodev  # PostgreSQL required
 python dashboard/server.py                    # Dashboard on :8080
 python -m watcher.agent_runner --agent pm     # Start specific agent
 
-# Deployment to ECS
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev
-docker build --platform linux/amd64 -t 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest .
-docker push 569498020693.dkr.ecr.us-east-1.amazonaws.com/auto-dev:latest
-
-# Redeploy ECS services (after push)
-aws ecs update-service --cluster auto-dev --service auto-dev-pm --force-new-deployment --region us-east-1
-# Or redeploy all agents:
-for svc in auto-dev-dashboard auto-dev-pm auto-dev-architect auto-dev-builder auto-dev-reviewer auto-dev-tester auto-dev-security auto-dev-devops auto-dev-bug_finder; do
-  aws ecs update-service --cluster auto-dev --service $svc --force-new-deployment --region us-east-1
-done
-
-# View ECS Logs
-aws logs tail /ecs/auto-dev --follow --filter-pattern "pm"
-
-# Check deployment status
-aws ecs describe-services --cluster auto-dev --services auto-dev-pm --region us-east-1 | jq '.services[0].deployments'
+# Deploy to KaaS (EKS)
+# Primary path is local kubectl apply. GitLab CI deploys are optional.
+kubectl apply -k k8s/
+kubectl rollout status deployment/auto-dev-dashboard -n <namespace>
+kubectl rollout status deployment/auto-dev-agent-pm -n <namespace>
 ```
 
 ## Dashboard URL
 
-```bash
-cd terraform && terraform output dashboard_url
-# http://internal-auto-dev-alb-588827158.us-east-1.elb.amazonaws.com
+```
+https://<app>.kaas.nimbus.amgen.com
 ```
 
 ## Architecture
@@ -121,7 +108,7 @@ PM → Architect → [Human Approval] → Builder → Reviewer/Tester/Security (
 - `config/agents/*.md` - Individual agent prompts
 - `POLICY.md` - Authoritative policy (approval gates, scope limits)
 - `ARCHITECTURE.md` - Detailed system architecture
-- `OPERATIONS.md` - ECS/AWS operations guide (deployment, monitoring, troubleshooting)
+- `OPERATIONS.md` - KaaS/EKS operations guide (deployment, monitoring, troubleshooting)
 
 ## LLM Providers
 
@@ -136,4 +123,4 @@ AUTODEV_LLM_PROVIDER=claude ./scripts/start_agents.sh  # Manual override
 - **Guided** (default): Human approval at spec and merge points
 - **Full**: Auto-approve if thresholds met (architect_confidence>=8, reviewer_score>=9, coverage>=80%)
 
-Credentials in AWS SSM under `/auto-dev/{repo-slug}/`
+Credentials are managed via AWS Secrets Manager + ESO in KaaS (local dev uses `.env`).

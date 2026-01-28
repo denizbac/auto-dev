@@ -22,6 +22,7 @@ import hashlib
 import hmac
 import time
 import logging
+import os
 import subprocess
 import json
 import sqlite3
@@ -44,7 +45,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Swarm Control Slack Bot")
 
 # ============================================================================
-# Configuration - loaded from AWS SSM
+# Configuration - env vars preferred, SSM fallback
 # ============================================================================
 
 _config_cache = {}
@@ -71,15 +72,15 @@ def get_ssm_parameter(name: str) -> Optional[str]:
 
 
 def get_signing_secret() -> str:
-    return get_ssm_parameter("/auto-dev/slack/signing_secret") or ""
+    return os.environ.get("SLACK_SIGNING_SECRET") or get_ssm_parameter("/auto-dev/slack/signing_secret") or ""
 
 
 def get_bot_token() -> str:
-    return get_ssm_parameter("/auto-dev/slack/bot_token") or ""
+    return os.environ.get("SLACK_BOT_TOKEN") or get_ssm_parameter("/auto-dev/slack/bot_token") or ""
 
 
 def get_allowed_users() -> set:
-    users = get_ssm_parameter("/auto-dev/slack/allowed_users") or ""
+    users = os.environ.get("SLACK_ALLOWED_USERS") or get_ssm_parameter("/auto-dev/slack/allowed_users") or ""
     return set(u.strip() for u in users.split(",") if u.strip())
 
 
@@ -1170,4 +1171,3 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8081)
-

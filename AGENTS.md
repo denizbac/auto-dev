@@ -7,7 +7,8 @@
 - `config/`: YAML settings and agent configuration.
 - `skills/` and `templates/`: prompt/skill definitions and scaffolding.
 - `scripts/` and `bin/`: operational helpers and CLI utilities.
-- `terraform/`: AWS ECS/EFS/ALB infrastructure as code.
+- `k8s/`: KaaS/EKS manifests (ingress, network policy, ESO, deployments).
+- `infra/iam/`: Terraform for KaaS ESO IAM role.
 - `docker-compose.yaml`, `Dockerfile`: local and containerized runtime.
 
 ## Build, Test, and Development Commands
@@ -21,7 +22,7 @@ make run-scheduler  # run scheduler service
 make up|down|logs   # docker-compose lifecycle
 make build          # build Docker images
 ```
-Infrastructure runs via `terraform/` (AWS ECS + EFS). Use `terraform init/plan/apply` there.
+Deployments run locally via `kubectl apply -k k8s/` to the shared KaaS/EKS cluster (GitLab CI optional).
 
 ## Coding Style & Naming Conventions
 - Python code uses 4-space indentation and `snake_case` names.
@@ -42,8 +43,8 @@ For PRs, include:
 - a short problem/solution description,
 - linked issue or ticket (if applicable),
 - screenshots for dashboard UI changes,
-- notes on infra changes (especially `terraform/`).
+- notes on infra changes (especially `k8s/`).
 
 ## Security & Configuration Tips
-- Store secrets in `.env` for local dev and SSM parameters for AWS.
-- Do not expose services publicly; the ALB is internal-only by design.
+- Store secrets in `.env` for local dev and AWS Secrets Manager + ESO for KaaS.
+- Ingress hostnames must use `*.kaas.nimbus.amgen.com` and nginx ingress class.

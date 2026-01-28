@@ -7,7 +7,7 @@ Usage:
     python gumroad_publisher.py list
     python gumroad_publisher.py login-test
 
-Credentials are fetched from AWS SSM Parameter Store.
+Credentials are fetched from environment variables (preferred) with SSM fallback.
 """
 
 import argparse
@@ -29,7 +29,11 @@ except ImportError:
 
 
 def get_credential(key: str) -> str:
-    """Fetch a credential from AWS SSM Parameter Store."""
+    """Fetch a credential from env vars, falling back to AWS SSM."""
+    env_value = os.environ.get(key)
+    if env_value:
+        return env_value
+
     # Map key names to SSM parameter names
     ssm_map = {
         'GUMROAD_EMAIL': '/auto-dev/gumroad/email',
@@ -46,7 +50,7 @@ def get_credential(key: str) -> str:
                 '--with-decryption',
                 '--query', 'Parameter.Value',
                 '--output', 'text',
-                '--region', 'us-east-1'
+                '--region', os.environ.get('AWS_REGION', 'us-west-2')
             ],
             capture_output=True,
             text=True,
@@ -109,7 +113,7 @@ class GumroadPublisher:
         self.page = None
         
     async def load_credentials(self):
-        """Load Gumroad credentials from secrets file or SSM."""
+        """Load Gumroad credentials from env vars or SSM."""
         print("Loading credentials...")
         self.email = get_credential('GUMROAD_EMAIL')
         self.password = get_credential('GUMROAD_PASSWORD')
@@ -303,4 +307,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-

@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: auto-dev
+  namespace: autodev
+  labels:
+    team: ois
+    costcenter: "14866"
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+    - host: auto-dev.kaas.nimbus.amgen.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: auto-dev-dashboard
+                port:
+                  number: 8080
+          - path: /webhook
+            pathType: Prefix
+            backend:
+              service:
+                name: auto-dev-webhook
+                port:
+                  number: 8081
