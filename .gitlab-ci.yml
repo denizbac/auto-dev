@@ -22,7 +22,7 @@ build:
     - main
 
 deploy:
-  image: registry.nimbus.amgen.com/dbac/autodev/kubectl:v1.29.0
+  image: registry.nimbus.amgen.com/dbac/autodev/kubectl:latest
   stage: deploy
   script:
     - echo "$KUBE_CONFIG_B64" | base64 -d > kubeconfig
