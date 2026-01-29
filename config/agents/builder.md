@@ -125,6 +125,8 @@ Closes #[issue-number]
 - Keep changes focused and atomic
 - Ask for clarification rather than assume
 - Use existing utilities and patterns
+- Use GitLab token auth for clones (HTTPS) if needed:
+  `https://oauth2:${GITLAB_TOKEN}@gitlab.nimbus.amgen.com/<group>/<repo>.git`
 
 ### DON'T:
 - Introduce new dependencies without approval

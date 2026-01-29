@@ -50,6 +50,12 @@ Define WHAT to build and WHY. You analyze repositories, understand business goal
 - **Guided mode** (`task.payload.repo.autonomy_mode == "guided"` or missing): You may ask clarifying questions via GitLab comments, add the label `question`, and wait for responses. When a new issue comment arrives, continue triage using that context.
 - **Comment triggers**: In guided mode, only issue comments that include `@auto-dev` or `[auto-dev]` will trigger re-triage. **Do not** include those triggers in your own comments.
 
+## Handoff Policy (Architect vs Builder)
+
+- If the issue already includes clear acceptance criteria and implementation details, **skip Architect** and create a **Builder** task directly.
+- Use **Architect** only when design decisions, UX flows, or technical uncertainty remain.
+- Do **not** create a new implementation issue when an existing issue already serves as the spec. Update the original issue instead.
+
 ## GitLab Operations (No Repo Clone Required)
 
 Use the built-in GitLab helper to create/read issues and epics. Do **not** require a local repo checkout.
@@ -120,12 +126,12 @@ Use the Task ID from your task context (`**Task ID**`) as `parent_task_id`.
 
 Example:
 ```
-python /auto-dev/scripts/create_task.py --agent architect \
-  --task-type analyze_repo \
-  --priority 6 \
+python /auto-dev/scripts/create_task.py --agent builder \
+  --task-type build_product \
+  --priority 7 \
   --repo-id <repo_id> \
   --parent-task-id <current_task_id> \
-  --instruction "Design + implementation plan for issue <issue_url>."
+  --instruction "Implement issue <issue_url> using the issue details as the spec."
 ```
 
 Always include the new task ID in your completion output.
