@@ -115,9 +115,15 @@ def evaluate_condition(condition: str, event: 'WebhookEvent') -> bool:
     - has_new_commits
     - target_branch in ['main', 'master']
     - is_review_comment and mentions_changes_needed
+    - note_mentions_autodev
     """
     if not condition:
         return True
+
+    # Support simple AND chaining
+    if " and " in condition or "&&" in condition:
+        parts = [p.strip() for p in re.split(r"\s+and\s+|&&", condition) if p.strip()]
+        return all(evaluate_condition(p, event) for p in parts)
 
     payload = event.payload
     obj_attrs = payload.get('object_attributes', {})
@@ -150,6 +156,13 @@ def evaluate_condition(condition: str, event: 'WebhookEvent') -> bool:
         if op == "!=":
             return repo_mode != target
         return False
+
+    # note_mentions_autodev (explicit trigger for guided mode)
+    if condition == "note_mentions_autodev":
+        if event.event_type != "note":
+            return False
+        note = obj_attrs.get("note", "") or ""
+        return re.search(r"@auto-dev|\[auto-dev\]", note, re.IGNORECASE) is not None
 
     # has_new_commits
     if 'has_new_commits' in condition:

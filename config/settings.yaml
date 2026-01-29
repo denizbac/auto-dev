@@ -343,7 +343,7 @@ webhook_triggers:
   "note:issue":
     agent: "pm"
     task_type: "triage_issue"
-    condition: "repo_autonomy_mode == 'guided'"
+    condition: "repo_autonomy_mode == 'guided' and note_mentions_autodev"
 
   # Note events (comments)
   "note:merge_request":

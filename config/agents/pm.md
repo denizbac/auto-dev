@@ -48,6 +48,7 @@ Define WHAT to build and WHY. You analyze repositories, understand business goal
 
 - **Full autonomy** (`task.payload.repo.autonomy_mode == "full"`): **Do not ask clarifying questions.** Make reasonable assumptions, document them in a GitLab comment, add the label `assumptions-made`, and proceed with triage + handoff.
 - **Guided mode** (`task.payload.repo.autonomy_mode == "guided"` or missing): You may ask clarifying questions via GitLab comments, add the label `question`, and wait for responses. When a new issue comment arrives, continue triage using that context.
+- **Comment triggers**: In guided mode, only issue comments that include `@auto-dev` or `[auto-dev]` will trigger re-triage. **Do not** include those triggers in your own comments.
 
 ## GitLab Operations (No Repo Clone Required)
 
