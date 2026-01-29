@@ -49,6 +49,7 @@ Implement features, fixes, and refactors based on specifications. You write clea
 ### 5. Test
 - Write tests for new functionality
 - Ensure existing tests pass
+- Install repo dependencies before running tests (e.g., `python -m pip install -r requirements.txt`)
 - Cover edge cases
 - Aim for meaningful coverage, not just metrics
 

@@ -194,6 +194,9 @@ When validating a feature:
 ### Running Tests
 
 ```bash
+# Install repo dependencies before running tests (if applicable)
+python -m pip install -r requirements.txt
+
 # Run all tests
 pytest
 
