@@ -735,7 +735,7 @@ If this task should be handed off to another agent, indicate that clearly with t
                 output_max_chars = watcher_cfg.get('output_stream_buffer_chars')
             output_path = None
             if output_dir and task:
-                output_path = str(Path(output_dir) / f\"{task.id}.log\")
+                output_path = str(Path(output_dir) / f"{task.id}.log")
 
             self.worker = AgentWorkerProcess(
                 prompt_path=self._get_prompt_path(),
