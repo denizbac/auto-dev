@@ -231,6 +231,7 @@ watcher:
   output_excerpt_chars: 4000
   output_summary_chars: 800
   output_store_dir: "/auto-dev/data/logs/tasks"
+  output_stream_buffer_chars: 200000
   # Optional S3 output store (set bucket + prefix to enable)
   output_store_s3_bucket: ""
   output_store_s3_prefix: "autodev/task-outputs"

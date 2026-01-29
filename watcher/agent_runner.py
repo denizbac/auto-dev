@@ -27,11 +27,12 @@ import logging
 import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass, field
 import threading
 import yaml
 import uuid
+from collections import deque
 try:
     import boto3
 except ImportError:
@@ -131,7 +132,9 @@ class AgentWorkerProcess:
         task_context: Optional[str] = None,
         provider: str = "claude",
         provider_config: Optional[Dict[str, Any]] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        output_path: Optional[str] = None,
+        output_max_chars: Optional[int] = None
     ):
         """
         Initialize worker process manager.
@@ -151,6 +154,16 @@ class AgentWorkerProcess:
         self.model = model
         self.process: Optional[subprocess.Popen] = None
         self.session_id: Optional[str] = None
+        self.output_path = output_path
+        self.output_max_chars = output_max_chars
+        self._output_file = None
+        self._output_lock = threading.Lock()
+        self._stdout_thread: Optional[threading.Thread] = None
+        self._stderr_thread: Optional[threading.Thread] = None
+        self._output_chunks = deque()
+        self._output_chars = 0
+        self._output_truncated = False
+        self._streaming_active = False
         
     def start(self) -> str:
         """
@@ -241,6 +254,10 @@ class AgentWorkerProcess:
             stderr=subprocess.PIPE,
             text=True
         )
+
+        # Stream output to file if configured
+        if self.output_path:
+            self._start_streaming()
         
         return self.session_id
     
@@ -259,6 +276,67 @@ class AgentWorkerProcess:
             return stdout, stderr
         except subprocess.TimeoutExpired:
             return "", ""
+
+    def _start_streaming(self) -> None:
+        """Start streaming stdout/stderr to a file and buffer."""
+        try:
+            output_path = Path(self.output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            self._output_file = open(output_path, 'a', encoding='utf-8', errors='replace')
+        except Exception as e:
+            logger.warning(f"Failed to open output file for streaming: {e}")
+            self._output_file = None
+            return
+
+        max_chars = self.output_max_chars
+        if max_chars is None:
+            max_chars = 200000  # default tail buffer size
+        max_chars = max(0, int(max_chars))
+
+        def _stream(pipe):
+            try:
+                for line in iter(pipe.readline, ''):
+                    if self._output_file:
+                        with self._output_lock:
+                            self._output_file.write(line)
+                            self._output_file.flush()
+                    if max_chars:
+                        with self._output_lock:
+                            self._output_chunks.append(line)
+                            self._output_chars += len(line)
+                            while self._output_chars > max_chars and self._output_chunks:
+                                removed = self._output_chunks.popleft()
+                                self._output_chars -= len(removed)
+                                self._output_truncated = True
+            finally:
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+
+        if self.process and self.process.stdout:
+            self._stdout_thread = threading.Thread(target=_stream, args=(self.process.stdout,), daemon=True)
+            self._stdout_thread.start()
+        if self.process and self.process.stderr:
+            self._stderr_thread = threading.Thread(target=_stream, args=(self.process.stderr,), daemon=True)
+            self._stderr_thread.start()
+        self._streaming_active = True
+
+    def finish_streaming(self) -> Tuple[str, str]:
+        """Finalize streaming and return buffered output."""
+        if not self._streaming_active:
+            return "", ""
+        for t in (self._stdout_thread, self._stderr_thread):
+            if t:
+                t.join(timeout=5)
+        if self._output_file:
+            try:
+                self._output_file.close()
+            except Exception:
+                pass
+        with self._output_lock:
+            output = ''.join(self._output_chunks)
+        return output, ""
     
     def stop(self, timeout: int = 10) -> int:
         """
@@ -649,6 +727,16 @@ If this task should be handed off to another agent, indicate that clearly with t
             provider_config = self._get_provider_config(provider)
             model = self._resolve_model_for_provider(provider)
 
+            output_dir = None
+            output_max_chars = None
+            if task:
+                watcher_cfg = self.config.get('watcher', {}) if isinstance(self.config, dict) else {}
+                output_dir = watcher_cfg.get('output_store_dir')
+                output_max_chars = watcher_cfg.get('output_stream_buffer_chars')
+            output_path = None
+            if output_dir and task:
+                output_path = str(Path(output_dir) / f\"{task.id}.log\")
+
             self.worker = AgentWorkerProcess(
                 prompt_path=self._get_prompt_path(),
                 working_dir='/auto-dev/data/projects',
@@ -656,7 +744,9 @@ If this task should be handed off to another agent, indicate that clearly with t
                 task_context=task_context,
                 provider=provider,
                 provider_config=provider_config,
-                model=model
+                model=model,
+                output_path=output_path,
+                output_max_chars=output_max_chars
             )
             
             session_id = self.worker.start()
@@ -695,6 +785,8 @@ If this task should be handed off to another agent, indicate that clearly with t
         try:
             if self.worker.process.poll() is None:
                 return "", ""  # Process still running
+            if self.worker.output_path:
+                return self.worker.finish_streaming()
             stdout, stderr = self.worker.process.communicate(timeout=5)
             return stdout or "", stderr or ""
         except Exception as e:
@@ -781,6 +873,8 @@ If this task should be handed off to another agent, indicate that clearly with t
                     'output_truncated': bool(output_excerpt) and len(output) > len(output_excerpt),
                     'output_chars': len(output or '')
                 }
+                if self.worker and self.worker.output_path:
+                    result_payload['output_path'] = self.worker.output_path
                 if output:
                     result_payload.update(self._store_full_output(task.id, output))
                 self.orchestrator.complete_task(
@@ -862,8 +956,9 @@ If this task should be handed off to another agent, indicate that clearly with t
                 output_dir = Path(store_dir)
                 output_dir.mkdir(parents=True, exist_ok=True)
                 output_path = output_dir / f"{task_id}.log"
-                with open(output_path, 'w', encoding='utf-8', errors='replace') as f:
-                    f.write(output)
+                if not output_path.exists():
+                    with open(output_path, 'w', encoding='utf-8', errors='replace') as f:
+                        f.write(output)
                 result['output_path'] = str(output_path)
             except Exception as e:
                 logger.warning(f"Failed to write full output to file: {e}")
