@@ -31,6 +31,7 @@ from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
 import threading
 import yaml
+import uuid
 try:
     import boto3
 except ImportError:
@@ -780,6 +781,8 @@ If this task should be handed off to another agent, indicate that clearly with t
                     'output_truncated': bool(output_excerpt) and len(output) > len(output_excerpt),
                     'output_chars': len(output or '')
                 }
+                if output:
+                    result_payload.update(self._store_full_output(task.id, output))
                 self.orchestrator.complete_task(
                     task.id,
                     self.agent_id,
@@ -844,6 +847,44 @@ If this task should be handed off to another agent, indicate that clearly with t
         if max_chars and len(summary) > max_chars:
             summary = summary[:max_chars].rstrip() + "…"
         return summary
+
+    def _store_full_output(self, task_id: str, output: str) -> Dict[str, Any]:
+        """Persist full task output to file and/or S3 when configured."""
+        result: Dict[str, Any] = {}
+        if not output:
+            return result
+
+        watcher_cfg = self.config.get('watcher', {}) if isinstance(self.config, dict) else {}
+
+        store_dir = watcher_cfg.get('output_store_dir')
+        if store_dir:
+            try:
+                output_dir = Path(store_dir)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                output_path = output_dir / f"{task_id}.log"
+                with open(output_path, 'w', encoding='utf-8', errors='replace') as f:
+                    f.write(output)
+                result['output_path'] = str(output_path)
+            except Exception as e:
+                logger.warning(f"Failed to write full output to file: {e}")
+
+        bucket = watcher_cfg.get('output_store_s3_bucket')
+        if bucket and boto3:
+            try:
+                prefix = watcher_cfg.get('output_store_s3_prefix', 'autodev/task-outputs').strip('/')
+                key = f"{prefix}/{task_id}-{uuid.uuid4().hex}.log"
+                s3 = boto3.client('s3')
+                s3.put_object(
+                    Bucket=bucket,
+                    Key=key,
+                    Body=output.encode('utf-8', errors='replace'),
+                    ContentType='text/plain'
+                )
+                result['output_url'] = f"s3://{bucket}/{key}"
+            except Exception as e:
+                logger.warning(f"Failed to upload full output to S3: {e}")
+
+        return result
 
     def _record_llm_reflection(self, task, success: bool, output: str, exit_code: int) -> None:
         """Generate an LLM-powered reflection and record it."""

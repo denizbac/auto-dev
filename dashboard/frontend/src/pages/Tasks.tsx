@@ -284,6 +284,23 @@ export default function Tasks() {
                           )
                         })()
                       )}
+                      {!!task.result && (task.status === 'completed' || task.status === 'failed') && (
+                        (() => {
+                          const result = task.result as { output_url?: string; output_path?: string }
+                          if (!result?.output_url && !result?.output_path) return null
+                          return (
+                            <div className="mt-2 rounded-md border border-border bg-muted/40 p-2">
+                              <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Full Output</p>
+                              {result.output_url && (
+                                <pre className="text-xs whitespace-pre-wrap break-all">{result.output_url}</pre>
+                              )}
+                              {result.output_path && !result.output_url && (
+                                <pre className="text-xs whitespace-pre-wrap break-all">{result.output_path}</pre>
+                              )}
+                            </div>
+                          )
+                        })()
+                      )}
                       <p className="text-xs text-muted-foreground mt-1">
                         {formatDate(task.created_at)} · ID: {task.id.slice(0, 8)}
                       </p>
