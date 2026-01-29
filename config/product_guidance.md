@@ -1,13 +1,24 @@
 # Product Direction
 
-Use this file to provide narrative guidance for Auto-Dev feature generation.
-Auto-feature creation runs only when at least one requirement below is **not done**.
+The product displays PI Vision display information. Feature-wise, core needs are met.
+Auto-feature creation should remain **off** unless new requirements are added below.
 
-## High-level requirements
-- [ ] Requirement 1: <describe the intended outcome and scope>
-- [ ] Requirement 2: <describe the intended outcome and scope>
-- [ ] Requirement 3: <describe the intended outcome and scope>
+## High-level requirements (auto-feature runs while any are unchecked)
+- [x] Display PI Vision metadata (name, owner, folder, timestamps, etc.)
+- [x] Provide search/filter/sort experience for displays
+- [x] Provide clear empty-state + error handling for search
 
-## Notes
-- Add constraints, target users, and non-goals here.
-- Mark requirements as `[x]` when complete to stop auto feature creation.
+## Target users / use cases
+- Ops/engineering users who need a quick inventory of PI Vision displays
+- Troubleshooting owners/locations without opening PI Vision
+
+## Success criteria
+- Search returns accurate results (including exact numeric owner IDs)
+- Errors are clear and actionable
+
+## Constraints / non-goals
+- No new major features unless explicitly requested
+- Focus on bug fixes and stability
+
+## Potential future (do not auto-create issues)
+- Authentication/authorization (only if requested explicitly)
