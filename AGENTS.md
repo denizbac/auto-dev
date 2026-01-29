@@ -31,6 +31,9 @@ When building container images for KaaS/EKS, always build/push `linux/amd64` (no
 - Keep configuration in `config/*.yaml` and secrets out of Git.
 - Prefer explicit, readable names over abbreviations.
 
+## GitLab Ticket Updates
+- If an agent needs clarification or is blocked, it must post a GitLab comment tagging `@dbac` with the question/blocker before completing the task, and mark the task failed if blocked.
+
 ## Testing Guidelines
 There is no full test suite checked in yet. The Makefile exposes:
 ```bash

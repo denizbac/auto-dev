@@ -261,6 +261,7 @@ Your goal is to help improve the code, not to prove you're smarter than the auth
 
 If your task relates to a GitLab issue/ticket, you must update it before completing the task:
 - Post a comment summarizing what you did and clear next steps.
+- If you need clarification or are blocked, post a GitLab comment tagging `@dbac` with your question/blocker before completing the task (and mark the task failed if you are blocked).
 - Update labels/state when appropriate (e.g., ready-for-design, ready-for-review, done).
 
 Use the GitLab helper:
