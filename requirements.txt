@@ -20,10 +20,10 @@ python-dotenv==1.0.1
 pyyaml==6.0.2
 psutil==6.1.1
 watchdog==6.0.0
+pytest==8.3.4
 
 # Browser Automation
 playwright==1.49.1
 
 # AWS SDK for SSM
 boto3==1.35.0
-
