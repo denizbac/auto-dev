@@ -33,6 +33,7 @@ import threading
 import yaml
 import uuid
 from collections import deque
+from urllib.parse import urlparse, quote
 try:
     import boto3
 except ImportError:
@@ -50,6 +51,40 @@ from watcher.memory import ShortTermMemoryDB, ShortTermMemory
 from watcher.orchestrator_pg import (
     get_orchestrator, Orchestrator, Task, TaskType, MessageType
 )
+
+
+def configure_git_auth() -> None:
+    """Configure Git to use the GitLab token for HTTPS clones."""
+    token = os.getenv("GITLAB_TOKEN")
+    if not token:
+        return
+
+    gitlab_url = os.getenv("GITLAB_URL", "https://gitlab.nimbus.amgen.com").rstrip("/")
+    parsed = urlparse(gitlab_url)
+    if parsed.scheme and parsed.netloc:
+        scheme = parsed.scheme
+        host = parsed.netloc
+    else:
+        scheme = "https"
+        host = gitlab_url
+
+    username = os.getenv("GITLAB_USERNAME") or "oauth2"
+    token_escaped = quote(token, safe="")
+    username_escaped = quote(username, safe="")
+
+    base_url = f"{scheme}://{host}/"
+    auth_url = f"{scheme}://{username_escaped}:{token_escaped}@{host}/"
+
+    try:
+        subprocess.run(
+            ["git", "config", "--global", f"url.{auth_url}.insteadOf", base_url],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        # Best-effort only; avoid breaking agent startup on git config failure.
+        return
 
 # Configure logging
 logging.basicConfig(
@@ -1527,6 +1562,7 @@ Examples:
 def main():
     """Main entry point."""
     args = parse_args()
+    configure_git_auth()
     runner = AgentRunner(
         config_path=args.config,
         agent_id=args.agent
