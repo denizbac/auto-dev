@@ -138,6 +138,19 @@ def evaluate_condition(condition: str, event: 'WebhookEvent') -> bool:
             return not has_it
         return has_it
 
+    # repo_autonomy_mode check (requires _auto_dev_repo injected into payload)
+    repo_meta = payload.get('_auto_dev_repo', {}) if isinstance(payload, dict) else {}
+    repo_mode = str(repo_meta.get('autonomy_mode', '')).lower()
+    mode_match = re.search(r"(?:repo_autonomy_mode|autonomy_mode)\s*([!=]=)\s*['\"](.+?)['\"]", condition)
+    if mode_match:
+        op = mode_match.group(1)
+        target = mode_match.group(2).lower()
+        if op == "==":
+            return repo_mode == target
+        if op == "!=":
+            return repo_mode != target
+        return False
+
     # has_new_commits
     if 'has_new_commits' in condition:
         # Check if action indicates new commits
@@ -211,22 +224,37 @@ class WebhookHandler:
         return hmac.compare_digest(signature, secret)
 
     def get_webhook_secret(self, repo_id: str) -> Optional[str]:
-        """Get webhook secret for a repo from SSM or environment."""
+        """Get webhook secret for a repo from settings, SSM, or environment."""
         # Try environment variable first
         secret = os.environ.get('GITLAB_WEBHOOK_SECRET')
         if secret:
             return secret
 
-        # Try repo-specific secret from SSM
+        # Try repo-specific secret from repo settings or SSM
         if self.repo_manager:
             repo = self.repo_manager.get_repo(repo_id)
-            if repo and repo.get('webhook_secret_ssm_path'):
+            if repo:
+                # Handle Repo dataclass or dict
+                settings = getattr(repo, 'settings', None)
+                if settings is None and isinstance(repo, dict):
+                    settings = repo.get('settings')
+                settings = settings or {}
+
+                secret = settings.get('webhook_secret')
+                if secret:
+                    return secret
+
+                ssm_path = settings.get('webhook_secret_ssm_path')
+                if not ssm_path and isinstance(repo, dict):
+                    ssm_path = repo.get('webhook_secret_ssm_path')
+
+            if repo and ssm_path:
                 # Get from SSM
                 import subprocess
                 try:
                     result = subprocess.run([
                         'aws', 'ssm', 'get-parameter',
-                        '--name', repo['webhook_secret_ssm_path'],
+                        '--name', ssm_path,
                         '--with-decryption',
                         '--query', 'Parameter.Value',
                         '--output', 'text'
@@ -255,7 +283,7 @@ class WebhookHandler:
         elif event_type == 'push':
             action = None
 
-        # Get repo identifier
+        # Get repo identifier from payload
         project = body.get('project', {})
         repo_id = project.get('path_with_namespace', str(project.get('id', 'unknown')))
 
@@ -266,6 +294,26 @@ class WebhookHandler:
             payload=body,
             timestamp=datetime.utcnow()
         )
+
+    def _resolve_repo(self, project: Dict[str, Any]) -> Optional[Any]:
+        """Resolve Auto-Dev repo from GitLab project metadata."""
+        if not self.repo_manager:
+            return None
+
+        project_path = project.get('path_with_namespace')
+        project_id = project.get('id')
+        if not project_path and project_id is not None:
+            project_path = str(project_id)
+
+        if not project_path:
+            return None
+
+        # Prefer lookup by GitLab project path/id
+        getter = getattr(self.repo_manager, 'get_repo_by_project_id', None)
+        if callable(getter):
+            return getter(project_path)
+
+        return None
 
     def route_event(self, event: WebhookEvent) -> Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]:
         """
@@ -388,6 +436,9 @@ class WebhookHandler:
             'repo_id': event.repo_id,
             'timestamp': event.timestamp.isoformat(),
         }
+        repo_meta = event.payload.get('_auto_dev_repo') if isinstance(event.payload, dict) else None
+        if repo_meta:
+            payload['repo'] = repo_meta
 
         obj_attrs = event.payload.get('object_attributes', {})
         project = event.payload.get('project', {})
@@ -517,9 +568,15 @@ class WebhookHandler:
         # Parse body
         body = await request.json()
 
-        # Get repo ID from payload for secret lookup
+        # Get repo/project from payload for secret lookup
         project = body.get('project', {})
-        repo_id = project.get('path_with_namespace', 'unknown')
+        repo = self._resolve_repo(project)
+        repo_id = repo.id if repo else project.get('path_with_namespace', 'unknown')
+        if repo:
+            body['_auto_dev_repo'] = {
+                'id': repo.id,
+                'autonomy_mode': repo.autonomy_mode,
+            }
 
         # Verify signature using timing-safe comparison
         secret = self.get_webhook_secret(repo_id)
@@ -530,6 +587,8 @@ class WebhookHandler:
         # Parse event
         headers = {'X-Gitlab-Event': x_gitlab_event or ''}
         event = self.parse_event(headers, body)
+        if repo:
+            event.repo_id = repo.id
 
         logger.info(
             f"Received webhook: {event.event_type}/{event.action} "
@@ -581,6 +640,16 @@ def create_webhook_routes(
 
     @router.post("/gitlab")
     async def gitlab_webhook(
+        request: Request,
+        x_gitlab_event: str = Header(None),
+        x_gitlab_token: str = Header(None)
+    ):
+        return await handler.handle_webhook(request, x_gitlab_event, x_gitlab_token)
+
+    # Backward-compatible route (repo_id is ignored; repo is resolved from payload)
+    @router.post("/gitlab/{repo_id}")
+    async def gitlab_webhook_repo(
+        repo_id: str,
         request: Request,
         x_gitlab_event: str = Header(None),
         x_gitlab_token: str = Header(None)

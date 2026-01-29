@@ -234,6 +234,13 @@ class Scheduler:
         logger.info(f"Running scheduled job: {job.name} ({job.task_type})")
 
         try:
+            # Internal jobs (no tasks)
+            if job.task_type == "poll_gitlab_issues":
+                from watcher.gitlab_issue_poll import poll_gitlab_issues
+                poll_gitlab_issues(self.orchestrator)
+                job.mark_run(now)
+                return
+
             # Get all active repos for this job
             repos = self._get_active_repos()
 
@@ -270,6 +277,13 @@ class Scheduler:
     def _get_active_repos(self) -> List[Dict[str, Any]]:
         """Get list of active repositories."""
         try:
+            if hasattr(self.orchestrator, 'list_repos'):
+                repos = self.orchestrator.list_repos(active_only=True)
+                if repos:
+                    return [
+                        r.to_dict() if hasattr(r, 'to_dict') else r
+                        for r in repos
+                    ]
             if hasattr(self.orchestrator, 'get_repos'):
                 return self.orchestrator.get_repos(active_only=True)
             elif hasattr(self.orchestrator, 'repos'):
@@ -328,9 +342,9 @@ if __name__ == '__main__':
 
     # Import orchestrator
     try:
-        from watcher.orchestrator_pg import PostgresOrchestrator
-        orchestrator = PostgresOrchestrator()
-    except ImportError:
+        from watcher.orchestrator_pg import get_orchestrator
+        orchestrator = get_orchestrator()
+    except Exception:
         from watcher.orchestrator import Orchestrator
         orchestrator = Orchestrator()
 

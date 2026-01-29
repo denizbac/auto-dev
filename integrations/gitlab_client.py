@@ -201,14 +201,27 @@ class GitLabClient:
         state: str = 'opened',
         labels: Optional[List[str]] = None,
         search: Optional[str] = None,
-        per_page: int = 20
+        per_page: int = 20,
+        page: int = 1,
+        updated_after: Optional[str] = None,
+        created_after: Optional[str] = None,
+        order_by: Optional[str] = None,
+        sort: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """List issues with optional filters."""
-        params = {'state': state, 'per_page': per_page}
+        params: Dict[str, Any] = {'state': state, 'per_page': per_page, 'page': page}
         if labels:
             params['labels'] = ','.join(labels)
         if search:
             params['search'] = search
+        if updated_after:
+            params['updated_after'] = updated_after
+        if created_after:
+            params['created_after'] = created_after
+        if order_by:
+            params['order_by'] = order_by
+        if sort:
+            params['sort'] = sort
 
         return self._request('GET', '/issues', params=params)
 

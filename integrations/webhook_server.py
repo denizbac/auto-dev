@@ -51,11 +51,12 @@ async def startup():
 
     # Import orchestrator (lazy to avoid circular imports)
     try:
-        from watcher.orchestrator import get_orchestrator
+        # Use Postgres-aware orchestrator (auto-detects DB from env)
+        from watcher.orchestrator_pg import get_orchestrator
         orchestrator = get_orchestrator()
 
         # Register webhook routes with orchestrator
-        webhook_router = create_webhook_routes(orchestrator)
+        webhook_router = create_webhook_routes(orchestrator, repo_manager=orchestrator)
         app.include_router(webhook_router)
 
         logger.info("Webhook routes registered with orchestrator")

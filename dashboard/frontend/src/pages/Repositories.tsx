@@ -26,6 +26,7 @@ import {
   getAgentConfig,
   createRepo,
   createTask,
+  updateRepo,
   type Repo,
 } from '@/lib/api'
 import { formatDate } from '@/lib/utils'

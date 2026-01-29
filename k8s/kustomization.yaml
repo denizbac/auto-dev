@@ -7,3 +7,10 @@ resources:
   - stateful.yaml
   - deployments.yaml
   - ingress.yaml
+configMapGenerator:
+  - name: auto-dev-proxy-ca
+    namespace: autodev
+    files:
+      - amgen-proxy-ca.crt=local/amgen-proxy-chain.pem
+generatorOptions:
+  disableNameSuffixHash: true

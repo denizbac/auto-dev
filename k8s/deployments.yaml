@@ -24,9 +24,30 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        - name: update-ca-certs
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc", "update-ca-certificates"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
+            - name: amgen-proxy-ca
+              mountPath: /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+              subPath: amgen-proxy-ca.crt
       containers:
         - name: auto-dev
-          image: registry.nimbus.amgen.com/dbac/autodev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
           imagePullPolicy: IfNotPresent
           resources:
             requests:
@@ -46,6 +67,8 @@ spec:
           volumeMounts:
             - name: auto-dev-data
               mountPath: /auto-dev/data
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
           readinessProbe:
             httpGet:
               path: /health
@@ -59,6 +82,14 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 20
       volumes:
+        - name: ca-certs
+          emptyDir: {}
+        - name: amgen-proxy-ca
+          configMap:
+            name: auto-dev-proxy-ca
+            items:
+              - key: amgen-proxy-ca.crt
+                path: amgen-proxy-ca.crt
         - name: auto-dev-data
           persistentVolumeClaim:
             claimName: auto-dev-dashboard-data
@@ -89,9 +120,30 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        - name: update-ca-certs
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc", "update-ca-certificates"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
+            - name: amgen-proxy-ca
+              mountPath: /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+              subPath: amgen-proxy-ca.crt
       containers:
         - name: auto-dev
-          image: registry.nimbus.amgen.com/dbac/autodev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
           imagePullPolicy: IfNotPresent
           resources:
             requests:
@@ -108,6 +160,9 @@ spec:
                 name: auto-dev-config
             - secretRef:
                 name: auto-dev-secrets
+          volumeMounts:
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
           readinessProbe:
             httpGet:
               path: /health
@@ -120,6 +175,15 @@ spec:
               port: 8081
             initialDelaySeconds: 15
             periodSeconds: 20
+      volumes:
+        - name: ca-certs
+          emptyDir: {}
+        - name: amgen-proxy-ca
+          configMap:
+            name: auto-dev-proxy-ca
+            items:
+              - key: amgen-proxy-ca.crt
+                path: amgen-proxy-ca.crt
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -147,9 +211,30 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        - name: update-ca-certs
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc", "update-ca-certificates"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
+            - name: amgen-proxy-ca
+              mountPath: /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+              subPath: amgen-proxy-ca.crt
       containers:
         - name: auto-dev
-          image: registry.nimbus.amgen.com/dbac/autodev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
           imagePullPolicy: IfNotPresent
           resources:
             requests:
@@ -167,7 +252,17 @@ spec:
           volumeMounts:
             - name: auto-dev-data
               mountPath: /auto-dev/data
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
       volumes:
+        - name: ca-certs
+          emptyDir: {}
+        - name: amgen-proxy-ca
+          configMap:
+            name: auto-dev-proxy-ca
+            items:
+              - key: amgen-proxy-ca.crt
+                path: amgen-proxy-ca.crt
         - name: auto-dev-data
           persistentVolumeClaim:
             claimName: auto-dev-scheduler-data
@@ -198,9 +293,30 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        - name: update-ca-certs
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc", "update-ca-certificates"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
+            - name: amgen-proxy-ca
+              mountPath: /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+              subPath: amgen-proxy-ca.crt
       containers:
         - name: auto-dev
-          image: registry.nimbus.amgen.com/dbac/autodev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
           imagePullPolicy: IfNotPresent
           resources:
             requests:
@@ -218,7 +334,17 @@ spec:
           volumeMounts:
             - name: auto-dev-data
               mountPath: /auto-dev/data
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
       volumes:
+        - name: ca-certs
+          emptyDir: {}
+        - name: amgen-proxy-ca
+          configMap:
+            name: auto-dev-proxy-ca
+            items:
+              - key: amgen-proxy-ca.crt
+                path: amgen-proxy-ca.crt
         - name: auto-dev-data
           persistentVolumeClaim:
             claimName: auto-dev-agent-pm-data
@@ -249,9 +375,30 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        - name: update-ca-certs
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc", "update-ca-certificates"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
+            - name: amgen-proxy-ca
+              mountPath: /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+              subPath: amgen-proxy-ca.crt
       containers:
         - name: auto-dev
-          image: registry.nimbus.amgen.com/dbac/autodev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
           imagePullPolicy: IfNotPresent
           resources:
             requests:
@@ -269,7 +416,17 @@ spec:
           volumeMounts:
             - name: auto-dev-data
               mountPath: /auto-dev/data
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
       volumes:
+        - name: ca-certs
+          emptyDir: {}
+        - name: amgen-proxy-ca
+          configMap:
+            name: auto-dev-proxy-ca
+            items:
+              - key: amgen-proxy-ca.crt
+                path: amgen-proxy-ca.crt
         - name: auto-dev-data
           persistentVolumeClaim:
             claimName: auto-dev-agent-architect-data
@@ -300,9 +457,30 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        - name: update-ca-certs
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc", "update-ca-certificates"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
+            - name: amgen-proxy-ca
+              mountPath: /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+              subPath: amgen-proxy-ca.crt
       containers:
         - name: auto-dev
-          image: registry.nimbus.amgen.com/dbac/autodev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
           imagePullPolicy: IfNotPresent
           resources:
             requests:
@@ -320,7 +498,17 @@ spec:
           volumeMounts:
             - name: auto-dev-data
               mountPath: /auto-dev/data
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
       volumes:
+        - name: ca-certs
+          emptyDir: {}
+        - name: amgen-proxy-ca
+          configMap:
+            name: auto-dev-proxy-ca
+            items:
+              - key: amgen-proxy-ca.crt
+                path: amgen-proxy-ca.crt
         - name: auto-dev-data
           persistentVolumeClaim:
             claimName: auto-dev-agent-builder-data
@@ -351,9 +539,30 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        - name: update-ca-certs
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc", "update-ca-certificates"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
+            - name: amgen-proxy-ca
+              mountPath: /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+              subPath: amgen-proxy-ca.crt
       containers:
         - name: auto-dev
-          image: registry.nimbus.amgen.com/dbac/autodev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
           imagePullPolicy: IfNotPresent
           resources:
             requests:
@@ -371,7 +580,17 @@ spec:
           volumeMounts:
             - name: auto-dev-data
               mountPath: /auto-dev/data
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
       volumes:
+        - name: ca-certs
+          emptyDir: {}
+        - name: amgen-proxy-ca
+          configMap:
+            name: auto-dev-proxy-ca
+            items:
+              - key: amgen-proxy-ca.crt
+                path: amgen-proxy-ca.crt
         - name: auto-dev-data
           persistentVolumeClaim:
             claimName: auto-dev-agent-reviewer-data
@@ -402,9 +621,30 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        - name: update-ca-certs
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc", "update-ca-certificates"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
+            - name: amgen-proxy-ca
+              mountPath: /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+              subPath: amgen-proxy-ca.crt
       containers:
         - name: auto-dev
-          image: registry.nimbus.amgen.com/dbac/autodev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
           imagePullPolicy: IfNotPresent
           resources:
             requests:
@@ -422,7 +662,17 @@ spec:
           volumeMounts:
             - name: auto-dev-data
               mountPath: /auto-dev/data
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
       volumes:
+        - name: ca-certs
+          emptyDir: {}
+        - name: amgen-proxy-ca
+          configMap:
+            name: auto-dev-proxy-ca
+            items:
+              - key: amgen-proxy-ca.crt
+                path: amgen-proxy-ca.crt
         - name: auto-dev-data
           persistentVolumeClaim:
             claimName: auto-dev-agent-tester-data
@@ -453,9 +703,30 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        - name: update-ca-certs
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc", "update-ca-certificates"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
+            - name: amgen-proxy-ca
+              mountPath: /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+              subPath: amgen-proxy-ca.crt
       containers:
         - name: auto-dev
-          image: registry.nimbus.amgen.com/dbac/autodev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
           imagePullPolicy: IfNotPresent
           resources:
             requests:
@@ -473,7 +744,17 @@ spec:
           volumeMounts:
             - name: auto-dev-data
               mountPath: /auto-dev/data
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
       volumes:
+        - name: ca-certs
+          emptyDir: {}
+        - name: amgen-proxy-ca
+          configMap:
+            name: auto-dev-proxy-ca
+            items:
+              - key: amgen-proxy-ca.crt
+                path: amgen-proxy-ca.crt
         - name: auto-dev-data
           persistentVolumeClaim:
             claimName: auto-dev-agent-security-data
@@ -504,9 +785,30 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        - name: update-ca-certs
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc", "update-ca-certificates"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
+            - name: amgen-proxy-ca
+              mountPath: /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+              subPath: amgen-proxy-ca.crt
       containers:
         - name: auto-dev
-          image: registry.nimbus.amgen.com/dbac/autodev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
           imagePullPolicy: IfNotPresent
           resources:
             requests:
@@ -524,7 +826,17 @@ spec:
           volumeMounts:
             - name: auto-dev-data
               mountPath: /auto-dev/data
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
       volumes:
+        - name: ca-certs
+          emptyDir: {}
+        - name: amgen-proxy-ca
+          configMap:
+            name: auto-dev-proxy-ca
+            items:
+              - key: amgen-proxy-ca.crt
+                path: amgen-proxy-ca.crt
         - name: auto-dev-data
           persistentVolumeClaim:
             claimName: auto-dev-agent-devops-data
@@ -555,9 +867,30 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        - name: update-ca-certs
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc", "update-ca-certificates"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
+            - name: amgen-proxy-ca
+              mountPath: /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+              subPath: amgen-proxy-ca.crt
       containers:
         - name: auto-dev
-          image: registry.nimbus.amgen.com/dbac/autodev:latest
+          image: registry.nimbus.amgen.com/dbac/autodev:ca-20260128-2015
           imagePullPolicy: IfNotPresent
           resources:
             requests:
@@ -575,7 +908,17 @@ spec:
           volumeMounts:
             - name: auto-dev-data
               mountPath: /auto-dev/data
+            - name: ca-certs
+              mountPath: /etc/ssl/certs
       volumes:
+        - name: ca-certs
+          emptyDir: {}
+        - name: amgen-proxy-ca
+          configMap:
+            name: auto-dev-proxy-ca
+            items:
+              - key: amgen-proxy-ca.crt
+                path: amgen-proxy-ca.crt
         - name: auto-dev-data
           persistentVolumeClaim:
             claimName: auto-dev-agent-bug-finder-data

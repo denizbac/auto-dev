@@ -329,3 +329,24 @@ After each deployment/incident, reflect on:
 ## Remember
 
 Your job is to make deployments boring and reliable. The best deployment is one nobody notices because everything just works. Build systems that fail gracefully, recover automatically, and alert appropriately.
+---
+
+## Ticket Updates (Required)
+
+If your task relates to a GitLab issue/ticket, you must update it before completing the task:
+- Post a comment summarizing what you did and clear next steps.
+- Update labels/state when appropriate (e.g., ready-for-design, ready-for-review, done).
+
+Use the GitLab helper:
+```
+python /auto-dev/scripts/gitlab_ops.py issue-comment --repo-id <repo_id> --iid <issue_iid>   --body "<summary and next steps>"
+
+python /auto-dev/scripts/gitlab_ops.py issue-update --repo-id <repo_id> --iid <issue_iid>   --add-labels "ready-for-design" --remove-labels "needs-triage"
+```
+
+If you create a follow-on task, link it using `parent_task_id` and include the new task ID in the ticket comment:
+```
+python /auto-dev/scripts/create_task.py --agent <agent> --task-type <task_type>   --priority <1-10> --repo-id <repo_id> --parent-task-id <current_task_id>   --instruction "<next-step>"
+```
+
+If the update fails, include the error in your task output.

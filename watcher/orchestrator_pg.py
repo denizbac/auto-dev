@@ -198,6 +198,7 @@ class Task:
     completed_at: Optional[str] = None
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    parent_task_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -450,6 +451,7 @@ class MultiTenantOrchestrator:
                     completed_at TEXT,
                     result TEXT,
                     error TEXT,
+                    parent_task_id TEXT,
                     needs_approval INTEGER DEFAULT 0,
                     approval_status TEXT,
                     approval_type TEXT,
@@ -462,6 +464,7 @@ class MultiTenantOrchestrator:
             # Add approval columns to existing tasks table (migration)
             # Whitelist of allowed columns to prevent SQL injection
             ALLOWED_MIGRATION_COLUMNS = {
+                'parent_task_id': ('TEXT', None),
                 'needs_approval': ('INTEGER', '0'),
                 'approval_status': ('TEXT', None),
                 'approval_type': ('TEXT', None),
@@ -677,6 +680,16 @@ class MultiTenantOrchestrator:
             return None
         return self._row_to_repo(row)
 
+    def get_repo_by_project_id(self, gitlab_project_id: str) -> Optional[Repo]:
+        """Get a repository by GitLab project path or ID."""
+        row = self.db.execute_one(
+            f"SELECT * FROM repos WHERE gitlab_project_id = {self.db.placeholder}",
+            (gitlab_project_id,)
+        )
+        if not row:
+            return None
+        return self._row_to_repo(row)
+
     def list_repos(self, status: str = None, active_only: bool = False) -> List[Repo]:
         """List all repositories."""
         if status:
@@ -690,6 +703,33 @@ class MultiTenantOrchestrator:
         else:
             rows = self.db.execute("SELECT * FROM repos ORDER BY name")
         return [self._row_to_repo(row) for row in rows]
+
+    def is_issue_processed(self, issue_id: str, repo_id: str, action: str) -> bool:
+        """Check if an issue event has been processed."""
+        row = self.db.execute_one(
+            f"""
+            SELECT 1 FROM processed_issues
+            WHERE issue_id = {self.db.placeholder}
+              AND repo_id = {self.db.placeholder}
+              AND action = {self.db.placeholder}
+            LIMIT 1
+            """,
+            (issue_id, repo_id, action)
+        )
+        return row is not None
+
+    def mark_issue_processed(self, issue_id: str, repo_id: str, action: str) -> None:
+        """Record an issue event as processed."""
+        now = datetime.utcnow().isoformat()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            p = self.db.placeholder
+            cursor.execute(f"""
+                INSERT INTO processed_issues (id, issue_id, repo_id, action, processed_at)
+                VALUES ({p}, {p}, {p}, {p}, {p})
+                ON CONFLICT (issue_id, repo_id, action) DO NOTHING
+            """, (str(uuid.uuid4()), issue_id, repo_id, action, now))
+            conn.commit()
 
     def delete_repo(self, repo_id: str) -> bool:
         """Delete a repository."""
@@ -783,7 +823,8 @@ class MultiTenantOrchestrator:
         payload: Dict[str, Any],
         priority: int = 5,
         created_by: Optional[str] = None,
-        assigned_to: Optional[str] = None
+        assigned_to: Optional[str] = None,
+        parent_task_id: Optional[str] = None
     ) -> Task:
         """Create a new task for a repository."""
         task = Task(
@@ -793,7 +834,8 @@ class MultiTenantOrchestrator:
             priority=min(10, max(1, priority)),
             payload=payload,
             created_by=created_by,
-            assigned_to=assigned_to
+            assigned_to=assigned_to,
+            parent_task_id=parent_task_id
         )
 
         with self.db.get_connection() as conn:
@@ -801,12 +843,12 @@ class MultiTenantOrchestrator:
             p = self.db.placeholder
             cursor.execute(f"""
                 INSERT INTO tasks
-                (id, repo_id, task_type, priority, payload, status, assigned_to, created_by, created_at)
-                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+                (id, repo_id, task_type, priority, payload, status, assigned_to, created_by, created_at, parent_task_id)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
             """, (
                 task.id, task.repo_id, task.type, task.priority,
                 json.dumps(task.payload), task.status, task.assigned_to,
-                task.created_by, task.created_at
+                task.created_by, task.created_at, task.parent_task_id
             ))
             conn.commit()
 
@@ -997,6 +1039,28 @@ class MultiTenantOrchestrator:
 
         return [self._row_to_task(row) for row in rows]
 
+    def get_assigned_tasks(
+        self,
+        agent_id: str,
+        statuses: Optional[List[str]] = None,
+        limit: int = 5
+    ) -> List[Task]:
+        """Get tasks currently assigned to a specific agent."""
+        statuses = statuses or ['claimed', 'in_progress']
+        p = self.db.placeholder
+        placeholders = ', '.join([p] * len(statuses))
+        params = [agent_id] + statuses + [limit]
+
+        rows = self.db.execute(f"""
+            SELECT * FROM tasks
+            WHERE assigned_to = {p}
+              AND status IN ({placeholders})
+            ORDER BY claimed_at ASC NULLS LAST, created_at ASC
+            LIMIT {p}
+        """, tuple(params))
+
+        return [self._row_to_task(row) for row in rows]
+
     def _row_to_task(self, row) -> Task:
         """Convert database row to Task object."""
         if hasattr(row, 'keys'):
@@ -1013,7 +1077,8 @@ class MultiTenantOrchestrator:
                 claimed_at=row['claimed_at'],
                 completed_at=row['completed_at'],
                 result=parse_json_field(row['result']),
-                error=row['error']
+                error=row['error'],
+                parent_task_id=row.get('parent_task_id')
             )
         else:
             return Task(
@@ -1029,7 +1094,8 @@ class MultiTenantOrchestrator:
                 claimed_at=row[9],
                 completed_at=row[10],
                 result=parse_json_field(row[11]),
-                error=row[12]
+                error=row[12],
+                parent_task_id=row[13] if len(row) > 13 else None
             )
 
     # ==================== Dev Approvals ====================

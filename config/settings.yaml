@@ -91,7 +91,7 @@ agents:
       - create_user_story
       - prioritize_backlog
       - triage_issue
-    session_max_tokens: 100000
+    session_max_tokens: 1000000
     description: "Product Manager - defines what to build, creates epics/stories, prioritizes backlog"
 
   architect:
@@ -103,7 +103,7 @@ agents:
       - evaluate_feasibility
       - write_spec
       - create_implementation_issue
-    session_max_tokens: 150000
+    session_max_tokens: 1500000
     description: "Designs solutions, writes specs, creates implementation issues"
 
   builder:
@@ -116,7 +116,7 @@ agents:
       - implement_fix
       - implement_refactor
       - address_review_feedback
-    session_max_tokens: 200000
+    session_max_tokens: 2000000
     description: "Implements features, fixes, and refactors based on specs"
 
   reviewer:
@@ -126,7 +126,7 @@ agents:
     provider: "codex"
     task_types:
       - review_mr
-    session_max_tokens: 150000
+    session_max_tokens: 1500000
     description: "Reviews merge requests for quality, bugs, and best practices"
 
   tester:
@@ -139,7 +139,7 @@ agents:
       - run_tests
       - validate_feature
       - analyze_coverage
-    session_max_tokens: 150000
+    session_max_tokens: 1500000
     description: "Writes tests, runs test suites, validates features"
 
   security:
@@ -151,7 +151,7 @@ agents:
       - security_scan
       - dependency_audit
       - compliance_check
-    session_max_tokens: 100000
+    session_max_tokens: 1000000
     description: "Security scanning, vulnerability detection, dependency audits"
 
   devops:
@@ -164,7 +164,7 @@ agents:
       - deploy
       - rollback
       - fix_build
-    session_max_tokens: 80000
+    session_max_tokens: 800000
     description: "CI/CD management, deployments, pipeline fixes"
 
   bug_finder:
@@ -175,7 +175,7 @@ agents:
     task_types:
       - static_analysis
       - bug_hunt
-    session_max_tokens: 100000
+    session_max_tokens: 1000000
     description: "Static analysis, proactive bug detection"
 
 # Database settings (PostgreSQL for multi-tenant)
@@ -210,7 +210,7 @@ orchestrator:
 
 # Token budget settings
 tokens:
-  daily_budget: 1000000  # 1M tokens/day
+  daily_budget: 10000000  # 10M tokens/day
   session_max: 200000
   warning_threshold: 0.7
 
@@ -226,8 +226,10 @@ watcher:
   health_check_interval: 60
   max_session_duration: 3600
   log_file: "/auto-dev/logs/watcher.log"
-  session_delay_min: 30
-  session_delay_max: 60
+  session_delay_min: 0
+  session_delay_max: 0
+  output_excerpt_chars: 4000
+  output_summary_chars: 800
 
 # Dashboard settings
 dashboard:
@@ -296,6 +298,14 @@ scheduling:
       enabled: false  # Enable per-repo if needed
       description: "Monthly repository health check"
 
+    # GitLab issue polling fallback (if webhooks are unavailable)
+    gitlab_issue_poll:
+      agent: "system"
+      task_type: "poll_gitlab_issues"
+      cron: "*/5 * * * *"  # every 5 minutes
+      enabled: true
+      description: "Poll GitLab for new issues and create triage tasks"
+
 # Webhook Triggers
 # Maps GitLab webhook events to agent tasks
 webhook_triggers:
@@ -303,7 +313,6 @@ webhook_triggers:
   "issue:open":
     agent: "pm"
     task_type: "triage_issue"
-    condition: "not has_label('auto-dev')"  # Only human-created issues
 
   # Merge Request events
   "merge_request:open":
@@ -329,6 +338,12 @@ webhook_triggers:
   "pipeline:failed":
     agent: "devops"
     task_type: "fix_build"
+
+  # Issue comment events (guided mode only)
+  "note:issue":
+    agent: "pm"
+    task_type: "triage_issue"
+    condition: "repo_autonomy_mode == 'guided'"
 
   # Note events (comments)
   "note:merge_request":

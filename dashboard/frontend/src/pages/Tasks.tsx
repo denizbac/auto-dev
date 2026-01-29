@@ -246,6 +246,9 @@ export default function Tasks() {
                         <span className="font-medium">{task.type}</span>
                         <Badge variant={config.variant}>{config.label}</Badge>
                         <Badge variant="outline">P{task.priority}</Badge>
+                        {task.parent_task_id && (
+                          <Badge variant="outline">Parent {task.parent_task_id.slice(0, 8)}</Badge>
+                        )}
                         {task.assigned_to && (
                           <Badge variant="secondary">{task.assigned_to}</Badge>
                         )}
@@ -255,6 +258,32 @@ export default function Tasks() {
                           ? (task.payload as { instruction?: string }).instruction || JSON.stringify(task.payload)
                           : String(task.payload)}
                       </p>
+                      {!!task.result && (task.status === 'completed' || task.status === 'failed') && (
+                        (() => {
+                          const result = task.result as { summary?: string }
+                          if (!result?.summary) return null
+                          return (
+                            <div className="mt-2 rounded-md border border-border bg-muted/30 p-2">
+                              <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Summary</p>
+                              <p className="text-xs whitespace-pre-wrap">{result.summary}</p>
+                            </div>
+                          )
+                        })()
+                      )}
+                      {!!task.result && (task.status === 'completed' || task.status === 'failed') && (
+                        (() => {
+                          const result = task.result as { output_excerpt?: string }
+                          if (!result?.output_excerpt) return null
+                          return (
+                            <div className="mt-2 rounded-md border border-border bg-muted/40 p-2">
+                              <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Output</p>
+                              <pre className="text-xs whitespace-pre-wrap max-h-40 overflow-auto">
+                                {result.output_excerpt}
+                              </pre>
+                            </div>
+                          )
+                        })()
+                      )}
                       <p className="text-xs text-muted-foreground mt-1">
                         {formatDate(task.created_at)} · ID: {task.id.slice(0, 8)}
                       </p>

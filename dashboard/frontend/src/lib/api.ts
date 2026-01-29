@@ -246,6 +246,7 @@ export interface Task {
   created_at: string
   assigned_to?: string
   repo_id?: string
+  parent_task_id?: string
   result?: unknown
 }
 
@@ -264,6 +265,7 @@ export interface CreateTaskRequest {
   to: string
   priority: number
   repo_id?: string | null
+  parent_task_id?: string | null
   payload: {
     instruction: string
     from: string

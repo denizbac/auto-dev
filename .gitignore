@@ -6,6 +6,7 @@
 !.env.example
 config.yaml
 kaas-cluster-1-config.yaml
+k8s/local/
 
 # Terraform
 terraform/.terraform/

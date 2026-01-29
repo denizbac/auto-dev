@@ -728,6 +728,7 @@ If this task should be handed off to another agent, indicate that clearly with t
                     agent_id=self.agent_id,
                     input_tokens=tokens_used.get('input', 0),
                     output_tokens=tokens_used.get('output', 0),
+                    total_tokens=tokens_used.get('total', 0),
                     session_id=self.state.current_session.session_id
                 )
             
@@ -763,10 +764,26 @@ If this task should be handed off to another agent, indicate that clearly with t
                 self.state.retry_task = task
             else:
                 success = exit_code == 0
+                summary = self._extract_task_summary(output)
+                output_excerpt = None
+                if output:
+                    max_chars = self.config.get('watcher', {}).get('output_excerpt_chars', 4000)
+                    max_chars = max(0, int(max_chars))
+                    if max_chars:
+                        output_excerpt = output[-max_chars:]
+                    else:
+                        output_excerpt = ""
+                result_payload = {
+                    'exit_code': exit_code,
+                    'summary': summary,
+                    'output_excerpt': output_excerpt,
+                    'output_truncated': bool(output_excerpt) and len(output) > len(output_excerpt),
+                    'output_chars': len(output or '')
+                }
                 self.orchestrator.complete_task(
                     task.id,
                     self.agent_id,
-                    result={'exit_code': exit_code} if success else None,
+                    result=result_payload,
                     error=f"Session exited with code {exit_code}" if not success else None
                 )
                 if success:
@@ -798,6 +815,35 @@ If this task should be handed off to another agent, indicate that clearly with t
 
         # Update status
         self.orchestrator.update_agent_status(self.agent_id, 'idle')
+
+    def _extract_task_summary(self, output: str) -> Optional[str]:
+        """Extract a short, human-readable summary from agent output."""
+        if not output:
+            return None
+
+        summary = None
+        for line in output.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if data.get('type') == 'item.completed':
+                item = data.get('item') or {}
+                if item.get('type') == 'agent_message' and item.get('text'):
+                    summary = item['text']
+
+        if not summary:
+            return None
+
+        max_chars = self.config.get('watcher', {}).get('output_summary_chars', 800)
+        max_chars = max(0, int(max_chars))
+        if max_chars and len(summary) > max_chars:
+            summary = summary[:max_chars].rstrip() + "…"
+        return summary
 
     def _record_llm_reflection(self, task, success: bool, output: str, exit_code: int) -> None:
         """Generate an LLM-powered reflection and record it."""
@@ -1113,6 +1159,32 @@ Format your response as a single paragraph. Be specific and actionable."""
             return False
         
         return True
+
+    def _recover_claimed_tasks(self) -> None:
+        """Recover tasks claimed by this agent after a restart."""
+        if self.state.retry_task or self.state.current_task:
+            return
+
+        getter = getattr(self.orchestrator, "get_assigned_tasks", None)
+        if not callable(getter):
+            return
+
+        try:
+            tasks = getter(self.agent_id, statuses=["claimed", "in_progress"], limit=5)
+        except Exception as e:
+            logger.warning(f"Failed to recover claimed tasks: {e}")
+            return
+
+        if not tasks:
+            return
+
+        task = tasks[0]
+        self.state.retry_task = task
+        logger.info(f"Recovered assigned task {task.id} ({task.type}) after restart")
+
+        if len(tasks) > 1:
+            task_ids = [t.id for t in tasks[1:]]
+            logger.warning(f"Multiple assigned tasks detected for {self.agent_id}: {task_ids}")
     
     def run(self) -> None:
         """Main watcher loop."""
@@ -1121,6 +1193,7 @@ Format your response as a single paragraph. Be specific and actionable."""
         
         # Register with orchestrator
         self.orchestrator.update_agent_status(self.agent_id, 'online')
+        self._recover_claimed_tasks()
         
         while not self.shutdown_requested:
             try:

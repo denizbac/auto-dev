@@ -115,6 +115,7 @@ class Task:
     completed_at: Optional[str] = None
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    parent_task_id: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -332,6 +333,7 @@ class Orchestrator:
                     result TEXT,
                     error TEXT,
                     repo_id TEXT,
+                    parent_task_id TEXT,
                     needs_approval INTEGER DEFAULT 0,
                     approval_status TEXT,
                     approval_type TEXT,
@@ -344,6 +346,10 @@ class Orchestrator:
             # Add approval columns to existing tables (migration)
             try:
                 conn.execute("ALTER TABLE tasks ADD COLUMN repo_id TEXT")
+            except:
+                pass
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN parent_task_id TEXT")
             except:
                 pass
             try:
@@ -595,6 +601,40 @@ class Orchestrator:
                 return None
             return self._row_to_repo_dict(row)
 
+    def is_issue_processed(self, issue_id: str, repo_id: str, action: str) -> bool:
+        """Check if an issue event has been processed."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT 1 FROM processed_issues
+                WHERE issue_id = ? AND repo_id = ? AND action = ?
+                LIMIT 1
+            """, (issue_id, repo_id, action))
+            return cursor.fetchone() is not None
+
+    def mark_issue_processed(self, issue_id: str, repo_id: str, action: str) -> None:
+        """Record an issue event as processed."""
+        now = datetime.utcnow().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                INSERT OR IGNORE INTO processed_issues
+                (id, issue_id, repo_id, action, processed_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (str(uuid.uuid4()), issue_id, repo_id, action, now))
+            conn.commit()
+
+    def get_repo_by_project_id(self, gitlab_project_id: str) -> Optional[Dict[str, Any]]:
+        """Get a repository by GitLab project path or ID."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM repos WHERE gitlab_project_id = ?",
+                (gitlab_project_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return self._row_to_repo_dict(row)
+
     def create_repo(
         self,
         repo_id: str,
@@ -678,7 +718,9 @@ class Orchestrator:
         payload: Dict[str, Any],
         priority: int = 5,
         created_by: Optional[str] = None,
-        allow_duplicates: bool = False
+        allow_duplicates: bool = False,
+        repo_id: Optional[str] = None,
+        parent_task_id: Optional[str] = None
     ) -> Optional[Task]:
         """
         Create a new task in the queue.
@@ -727,17 +769,18 @@ class Orchestrator:
             type=task_type,
             priority=min(10, max(1, priority)),
             payload=payload,
-            created_by=created_by
+            created_by=created_by,
+            parent_task_id=parent_task_id
         )
 
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
-                INSERT INTO tasks (id, type, priority, payload, status, created_by, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks (id, type, priority, payload, status, created_by, created_at, repo_id, parent_task_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task.id, task.type, task.priority,
                 json.dumps(task.payload), task.status,
-                task.created_by, task.created_at
+                task.created_by, task.created_at, repo_id, parent_task_id
             ))
             conn.commit()
 
@@ -918,7 +961,8 @@ class Orchestrator:
                 claimed_at=row['claimed_at'],
                 completed_at=row['completed_at'],
                 result=json.loads(row['result']) if row['result'] else None,
-                error=row['error']
+                error=row['error'],
+                parent_task_id=row['parent_task_id']
             )
     
     def get_pending_tasks(self, limit: int = 50) -> List[Task]:
@@ -940,7 +984,47 @@ class Orchestrator:
                 status=row['status'],
                 assigned_to=row['assigned_to'],
                 created_by=row['created_by'],
-                created_at=row['created_at']
+                created_at=row['created_at'],
+                parent_task_id=row['parent_task_id']
+            ) for row in cursor.fetchall()]
+
+    def get_assigned_tasks(
+        self,
+        agent_id: str,
+        statuses: Optional[List[str]] = None,
+        limit: int = 5
+    ) -> List[Task]:
+        """Get tasks currently assigned to a specific agent."""
+        statuses = statuses or ['claimed', 'in_progress']
+        placeholders = ','.join(['?'] * len(statuses))
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(f"""
+                SELECT * FROM tasks
+                WHERE assigned_to = ?
+                  AND status IN ({placeholders})
+                ORDER BY
+                    CASE WHEN claimed_at IS NULL THEN 1 ELSE 0 END,
+                    claimed_at ASC,
+                    created_at ASC
+                LIMIT ?
+            """, [agent_id] + statuses + [limit])
+
+            return [Task(
+                id=row['id'],
+                type=row['type'],
+                priority=row['priority'],
+                payload=json.loads(row['payload']),
+                status=row['status'],
+                assigned_to=row['assigned_to'],
+                created_by=row['created_by'],
+                created_at=row['created_at'],
+                claimed_at=row['claimed_at'],
+                completed_at=row['completed_at'],
+                result=json.loads(row['result']) if row['result'] else None,
+                error=row['error'],
+                parent_task_id=row['parent_task_id']
             ) for row in cursor.fetchall()]
     
     def get_queue_stats(self) -> Dict[str, Any]:
@@ -2444,4 +2528,3 @@ def get_orchestrator(
     if _orchestrator is None:
         _orchestrator = Orchestrator(db_path=db_path, redis_url=redis_url)
     return _orchestrator
-

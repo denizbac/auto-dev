@@ -226,7 +226,7 @@ async def get_webhook_info(repo_id: str, regenerate: bool = False) -> WebhookInf
 
     # Get the dashboard URL from environment or default
     base_url = os.environ.get("AUTO_DEV_URL", "http://localhost:8080")
-    webhook_url = f"{base_url}/webhook/gitlab/{repo_id}"
+    webhook_url = f"{base_url}/webhook/gitlab"
 
     # Mask secret if not newly generated (security: don't expose on every read)
     display_secret = webhook_secret if is_new_secret else f"{webhook_secret[:8]}...{webhook_secret[-4:]}"

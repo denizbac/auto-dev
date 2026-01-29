@@ -7,11 +7,21 @@ FROM registry.nimbus.amgen.com/dbac/autodev/python:3.11-slim as python-builder
 
 WORKDIR /build
 
+# Trust Amgen proxy CA during builds (file is provided locally (not in git)).
+ARG AMGEN_PROXY_CA_FILE=k8s/local/amgen-proxy-chain.pem
+
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install proxy CA so pip can reach PyPI through the MITM proxy
+COPY ${AMGEN_PROXY_CA_FILE} /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+RUN update-ca-certificates
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
 # Install Python dependencies
 COPY requirements.txt .
@@ -21,6 +31,14 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 FROM registry.nimbus.amgen.com/dbac/autodev/node:20-slim as frontend-builder
 
 WORKDIR /app
+
+# Trust Amgen proxy CA during frontend build
+ARG AMGEN_PROXY_CA_FILE=k8s/local/amgen-proxy-chain.pem
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY ${AMGEN_PROXY_CA_FILE} /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+RUN update-ca-certificates
 
 # Copy frontend package files
 COPY dashboard/frontend/package*.json ./
@@ -39,6 +57,9 @@ FROM registry.nimbus.amgen.com/dbac/autodev/python:3.11-slim
 
 WORKDIR /auto-dev
 
+# Trust Amgen proxy CA in runtime image
+ARG AMGEN_PROXY_CA_FILE=k8s/local/amgen-proxy-chain.pem
+
 # Install runtime dependencies including Node.js for Codex CLI
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -46,12 +67,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     ca-certificates \
     gnupg \
-    && mkdir -p /etc/apt/keyrings \
-    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
-    && apt-get update \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/* \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install proxy CA so Codex/Node can reach ChatGPT through the MITM proxy
+COPY ${AMGEN_PROXY_CA_FILE} /usr/local/share/ca-certificates/amgen-proxy-ca.crt
+RUN update-ca-certificates \
     && npm install -g @openai/codex@0.80.0 @anthropic-ai/claude-code@2.1.7 \
     && useradd -m -s /bin/bash autodev
 

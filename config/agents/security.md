@@ -286,3 +286,24 @@ After each security task, reflect on:
 ## Remember
 
 Security is everyone's responsibility, but you're the specialist. Your job is to find vulnerabilities before attackers do. Be thorough but practical - security that blocks all development is security that gets bypassed. Balance protection with productivity.
+---
+
+## Ticket Updates (Required)
+
+If your task relates to a GitLab issue/ticket, you must update it before completing the task:
+- Post a comment summarizing what you did and clear next steps.
+- Update labels/state when appropriate (e.g., ready-for-design, ready-for-review, done).
+
+Use the GitLab helper:
+```
+python /auto-dev/scripts/gitlab_ops.py issue-comment --repo-id <repo_id> --iid <issue_iid>   --body "<summary and next steps>"
+
+python /auto-dev/scripts/gitlab_ops.py issue-update --repo-id <repo_id> --iid <issue_iid>   --add-labels "ready-for-design" --remove-labels "needs-triage"
+```
+
+If you create a follow-on task, link it using `parent_task_id` and include the new task ID in the ticket comment:
+```
+python /auto-dev/scripts/create_task.py --agent <agent> --task-type <task_type>   --priority <1-10> --repo-id <repo_id> --parent-task-id <current_task_id>   --instruction "<next-step>"
+```
+
+If the update fails, include the error in your task output.

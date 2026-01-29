@@ -23,6 +23,7 @@ make up|down|logs   # docker-compose lifecycle
 make build          # build Docker images
 ```
 Deployments run locally via `kubectl apply -k k8s/` to the shared KaaS/EKS cluster (GitLab CI optional).
+When building container images for KaaS/EKS, always build/push `linux/amd64` (not arm64), e.g. `docker buildx build --platform linux/amd64 ...`.
 
 ## Coding Style & Naming Conventions
 - Python code uses 4-space indentation and `snake_case` names.
@@ -48,3 +49,4 @@ For PRs, include:
 ## Security & Configuration Tips
 - Store secrets in `.env` for local dev and AWS Secrets Manager + ESO for KaaS.
 - Ingress hostnames must use `*.kaas.nimbus.amgen.com` and nginx ingress class.
+- When an agent works on a GitLab issue/ticket, it must post a summary comment and update labels/state via `scripts/gitlab_ops.py`.

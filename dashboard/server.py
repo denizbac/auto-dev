@@ -98,6 +98,7 @@ async def run_migrations():
             ("Add approved_by column", "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS approved_by TEXT"),
             ("Add approved_at column", "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP"),
             ("Add rejection_reason column", "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS rejection_reason TEXT"),
+            ("Add parent_task_id column", "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS parent_task_id UUID"),
             ("Drop old status constraint", "ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check"),
             ("Add new status constraint", "ALTER TABLE tasks ADD CONSTRAINT tasks_status_check CHECK (status IN ('pending', 'claimed', 'in_progress', 'completed', 'failed', 'cancelled'))"),
             # Repos table migrations
@@ -845,6 +846,7 @@ def init_postgres_schema():
             """CREATE TABLE IF NOT EXISTS tasks (
                 id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
                 repo_id UUID REFERENCES repos(id) ON DELETE CASCADE,
+                parent_task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
                 task_type TEXT NOT NULL,
                 status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'claimed', 'in_progress', 'completed', 'failed', 'cancelled')),
                 priority INTEGER DEFAULT 5 CHECK (priority BETWEEN 1 AND 10),
@@ -1012,6 +1014,7 @@ async def create_task(request: Request):
 
         # Extract repo_id and assigned_to from the request
         repo_id = data.get('repo_id')
+        parent_task_id = data.get('parent_task_id')
         assigned_to = data.get('to')  # Agent to assign task to
 
         # Include repo_id in payload if provided
@@ -1020,8 +1023,8 @@ async def create_task(request: Request):
             payload['repo_id'] = repo_id
 
         conn.execute("""
-            INSERT INTO tasks (id, task_type, priority, payload, status, created_by, created_at, assigned_to, repo_id)
-            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+            INSERT INTO tasks (id, task_type, priority, payload, status, created_by, created_at, assigned_to, repo_id, parent_task_id)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
         """, (
             task_id,
             data.get('type', 'build_product'),
@@ -1030,7 +1033,8 @@ async def create_task(request: Request):
             data.get('created_by', 'dashboard'),
             now,
             assigned_to,
-            repo_id
+            repo_id,
+            parent_task_id
         ))
         conn.commit()
 
