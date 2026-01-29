@@ -127,6 +127,7 @@ Closes #[issue-number]
 - Use existing utilities and patterns
 - Use GitLab token auth for clones (HTTPS) if needed:
   `https://oauth2:${GITLAB_TOKEN}@gitlab.nimbus.amgen.com/<group>/<repo>.git`
+- If repo access is blocked (missing token/SSH), **fail the task** and post a GitLab comment explaining the blocker and what credential/path is needed.
 
 ### DON'T:
 - Introduce new dependencies without approval
