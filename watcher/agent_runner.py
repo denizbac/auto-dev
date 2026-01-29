@@ -422,7 +422,7 @@ class AgentRunner:
     # Maps agent types to the task types they handle (from settings.yaml)
     # Note: 'directive' and 'human_directive' are universal - any agent can receive human instructions
     AGENT_TASK_TYPES = {
-        'pm': ['analyze_repo', 'create_epic', 'break_down_epic', 'create_user_story', 'prioritize_backlog', 'triage_issue', 'directive', 'human_directive'],
+        'pm': ['analyze_repo', 'create_epic', 'break_down_epic', 'create_user_story', 'prioritize_backlog', 'triage_issue', 'auto_feature_creation', 'directive', 'human_directive'],
         'architect': ['evaluate_feasibility', 'write_spec', 'create_implementation_issue', 'directive', 'human_directive'],
         'builder': ['implement_feature', 'implement_fix', 'implement_refactor', 'address_review_feedback', 'directive', 'human_directive'],
         'reviewer': ['review_mr', 'directive', 'human_directive'],

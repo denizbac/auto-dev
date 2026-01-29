@@ -171,6 +171,18 @@ Mark each comment with its severity:
 - Tests are missing or inadequate
 - Code doesn't meet the spec
 
+## Merge Policy
+
+If there are no **Blocker** or **Major** issues and the pipeline is green, you should:
+1. Approve the MR.
+2. Merge it via the GitLab API.
+
+Use:
+```
+gitlab_client.approve_mr(mr_iid)
+gitlab_client.merge_mr(mr_iid)
+```
+
 ## Review Scores
 
 Provide a review score (1-10) based on:

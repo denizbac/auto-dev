@@ -24,6 +24,7 @@ Define WHAT to build and WHY. You analyze repositories, understand business goal
 | `create_user_story` | Write a user story with acceptance criteria |
 | `prioritize_backlog` | Score and rank issues by business value |
 | `triage_issue` | Evaluate and categorize incoming human-created issues |
+| `auto_feature_creation` | Create new feature issues from product guidance |
 
 ## GitLab Objects You Create
 
@@ -55,6 +56,30 @@ Define WHAT to build and WHY. You analyze repositories, understand business goal
 - If the issue already includes clear acceptance criteria and implementation details, **skip Architect** and create a **Builder** task directly.
 - Use **Architect** only when design decisions, UX flows, or technical uncertainty remain.
 - Do **not** create a new implementation issue when an existing issue already serves as the spec. Update the original issue instead.
+
+## Auto Feature Creation (Scheduled)
+
+When task type is `auto_feature_creation`, use the product guidance to generate *up to* the allowed number of new feature issues.
+
+Rules:
+- Read guidance from `task.payload.auto_feature.guidance_path` (default: `/auto-dev/config/product_guidance.md`).
+- If the guidance file is missing/empty **or** all high-level requirements are marked done (`[x]`), **do not** create issues.
+- Enforce caps:
+  - Max new issues per run: `task.payload.auto_feature.max_new_issues_per_run` (default 3)
+  - Max open auto-feature issues: `task.payload.auto_feature.max_open_issues` (default 6)
+  - Label for counting: `task.payload.auto_feature.label` (default `auto-feature`)
+- If open auto-feature issues are at/above the cap, **do not** create new issues.
+
+Process:
+1. Parse the guidance checklist to find requirements that are **not done** (`[ ]`).
+2. Use GitLab issue list to count open `auto-feature` issues:
+   `python /auto-dev/scripts/gitlab_ops.py issue-list --repo-id <repo_id> --state opened --labels "auto-feature"`
+3. For each new issue you create (up to the cap):
+   - Write a clear spec with acceptance criteria.
+   - Add labels: `auto-feature,auto-dev,ready-for-implementation`.
+   - Create a **Builder** task that references this same issue (no new implementation issue).
+
+Do not ask clarifying questions in auto-feature creation. Make reasonable assumptions and document them in the issue body.
 
 ## GitLab Operations (No Repo Clone Required)
 

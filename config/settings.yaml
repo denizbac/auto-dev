@@ -91,6 +91,7 @@ agents:
       - create_user_story
       - prioritize_backlog
       - triage_issue
+      - auto_feature_creation
     session_max_tokens: 1000000
     description: "Product Manager - defines what to build, creates epics/stories, prioritizes backlog"
 
@@ -255,6 +256,15 @@ rate_limits:
     max_delay_seconds: 30
     max_api_calls_per_minute: 60
 
+# Product guidance & auto-feature creation
+product:
+  auto_feature_creation:
+    enabled: true
+    guidance_path: "/auto-dev/config/product_guidance.md"
+    max_new_issues_per_run: 3
+    max_open_issues: 6
+    label: "auto-feature"
+
 # Scheduled Jobs
 # Cron expressions: minute hour day month weekday
 # Can be overridden per-repo in database
@@ -295,6 +305,14 @@ scheduling:
       enabled: true
       description: "Weekly backlog prioritization"
 
+    # PM - auto feature creation (daily when enabled)
+    pm_auto_feature_creation:
+      agent: "pm"
+      task_type: "auto_feature_creation"
+      cron: "0 8 * * *"  # 8 AM daily
+      enabled: true
+      description: "Daily auto feature creation from product guidance"
+
     # PM - tech debt analysis (optional)
     pm_repo_analysis:
       agent: "pm"
@@ -321,23 +339,13 @@ webhook_triggers:
 
   # Merge Request events
   "merge_request:open":
-    parallel:
-      - agent: "reviewer"
-        task_type: "review_mr"
-      - agent: "security"
-        task_type: "security_scan"
-      - agent: "tester"
-        task_type: "run_tests"
+    agent: "reviewer"
+    task_type: "review_mr"
 
   "merge_request:update":
     agent: "reviewer"
     task_type: "review_mr"
     condition: "has_new_commits"
-
-  "merge_request:merge":
-    agent: "devops"
-    task_type: "deploy"
-    condition: "target_branch in ['main', 'master', 'production']"
 
   # Pipeline events
   "pipeline:failed":

@@ -52,16 +52,10 @@ class WebhookConfig:
         'issue:update': None,  # Usually no action needed
         'issue:reopen': {'agent': 'pm', 'task_type': 'triage_issue'},
 
-        # Merge Request events - parallel execution
-        'merge_request:open': {
-            'parallel': [
-                {'agent': 'reviewer', 'task_type': 'review_mr'},
-                {'agent': 'security', 'task_type': 'security_scan'},
-                {'agent': 'tester', 'task_type': 'run_tests'},
-            ]
-        },
+        # Merge Request events
+        'merge_request:open': {'agent': 'reviewer', 'task_type': 'review_mr'},
         'merge_request:update': {'agent': 'reviewer', 'task_type': 'review_mr'},
-        'merge_request:merge': {'agent': 'devops', 'task_type': 'deploy'},
+        'merge_request:merge': None,
 
         # Note (comment) events
         'note:merge_request': {'agent': 'builder', 'task_type': 'address_review_feedback'},

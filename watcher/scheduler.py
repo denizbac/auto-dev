@@ -15,8 +15,10 @@ Usage:
 import time
 import logging
 import threading
+import os
+import re
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 
 import yaml
@@ -130,9 +132,11 @@ class Scheduler:
         self.jobs: List[ScheduledJob] = []
         self.running = False
         self._thread: Optional[threading.Thread] = None
+        self.config: Dict[str, Any] = {}
 
         # Load config
         if config:
+            self.config = config
             self._load_from_config(config)
         elif config_path:
             self._load_from_file(config_path)
@@ -157,6 +161,7 @@ class Scheduler:
         try:
             with open(config_path) as f:
                 config = yaml.safe_load(f)
+                self.config = config or {}
                 self._load_from_config(config)
         except Exception as e:
             logger.error(f"Failed to load scheduler config: {e}")
@@ -241,6 +246,24 @@ class Scheduler:
                 job.mark_run(now)
                 return
 
+            auto_feature_cfg = self._get_auto_feature_config()
+            guidance_status: Optional[Tuple[int, int]] = None
+            if job.task_type == "auto_feature_creation":
+                if not auto_feature_cfg.get("enabled", False):
+                    logger.info("Auto feature creation disabled; skipping")
+                    job.mark_run(now)
+                    return
+
+                guidance_path = auto_feature_cfg.get(
+                    "guidance_path",
+                    "/auto-dev/config/product_guidance.md"
+                )
+                guidance_status = self._get_guidance_progress(guidance_path)
+                if not guidance_status:
+                    logger.info("Auto feature creation skipped: no guidance or no open requirements")
+                    job.mark_run(now)
+                    return
+
             # Get all active repos for this job
             repos = self._get_active_repos()
 
@@ -249,15 +272,25 @@ class Scheduler:
                 if not self._job_enabled_for_repo(job, repo):
                     continue
 
-                # Create task
+                if job.task_type == "auto_feature_creation":
+                    if not self._auto_feature_repo_ready(repo, auto_feature_cfg):
+                        continue
+
+                payload = {
+                    'source': 'scheduler',
+                    'job_name': job.name,
+                    'scheduled_time': now.isoformat(),
+                    'description': job.description,
+                }
+                if job.task_type == "auto_feature_creation":
+                    payload['auto_feature'] = self._build_auto_feature_payload(
+                        auto_feature_cfg,
+                        guidance_status
+                    )
+
                 task = self.orchestrator.create_task(
                     task_type=job.task_type,
-                    payload={
-                        'source': 'scheduler',
-                        'job_name': job.name,
-                        'scheduled_time': now.isoformat(),
-                        'description': job.description,
-                    },
+                    payload=payload,
                     priority=3,  # Lower priority for scheduled jobs
                     created_by='scheduler',
                     repo_id=repo.get('id')
@@ -273,6 +306,95 @@ class Scheduler:
 
         except Exception as e:
             logger.error(f"Failed to run scheduled job {job.name}: {e}")
+
+    def _get_auto_feature_config(self) -> Dict[str, Any]:
+        """Fetch auto feature creation config."""
+        return (
+            self.config.get("product", {})
+            .get("auto_feature_creation", {})
+        )
+
+    def _get_guidance_progress(self, guidance_path: str) -> Optional[Tuple[int, int]]:
+        """
+        Return (pending, total) requirements from guidance. None if missing/empty/all done.
+        """
+        if not guidance_path:
+            return None
+
+        path = Path(guidance_path)
+        if not path.exists():
+            return None
+
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception:
+            return None
+
+        total = 0
+        pending = 0
+        for line in content.splitlines():
+            match = re.match(r"^\s*[-*]\s+\[( |x|X)\]\s+.+", line)
+            if not match:
+                continue
+            total += 1
+            if match.group(1).lower() != "x":
+                pending += 1
+
+        if total == 0 or pending == 0:
+            return None
+
+        return pending, total
+
+    def _auto_feature_repo_ready(self, repo: Dict[str, Any], cfg: Dict[str, Any]) -> bool:
+        """Check repo readiness and open-issue caps for auto feature creation."""
+        token = os.getenv("GITLAB_TOKEN")
+        if not token:
+            logger.warning("GITLAB_TOKEN missing; skipping auto feature creation")
+            return False
+
+        if repo.get("provider", "gitlab") != "gitlab":
+            logger.warning("Auto feature creation only supports GitLab repos")
+            return False
+
+        gitlab_url = repo.get("gitlab_url")
+        project_id = repo.get("gitlab_project_id")
+        if not gitlab_url or not project_id:
+            logger.warning("Missing gitlab_url/project_id; skipping auto feature creation")
+            return False
+
+        label = cfg.get("label", "auto-feature")
+        max_open = int(cfg.get("max_open_issues", 6))
+
+        try:
+            from integrations.gitlab_client import GitLabClient, GitLabConfig
+            client = GitLabClient(GitLabConfig(url=gitlab_url, project_id=project_id))
+            issues = client.list_issues(state="opened", labels=[label], per_page=max_open + 1, page=1)
+            if len(issues) >= max_open:
+                logger.info(
+                    f"Auto feature creation skipped: {len(issues)} open '{label}' issues (cap {max_open})"
+                )
+                return False
+        except Exception as e:
+            logger.warning(f"Failed to check open auto-feature issues: {e}")
+            return False
+
+        return True
+
+    def _build_auto_feature_payload(
+        self,
+        cfg: Dict[str, Any],
+        guidance_status: Optional[Tuple[int, int]]
+    ) -> Dict[str, Any]:
+        """Build payload details for auto feature creation tasks."""
+        pending, total = guidance_status or (0, 0)
+        return {
+            "guidance_path": cfg.get("guidance_path", "/auto-dev/config/product_guidance.md"),
+            "max_new_issues_per_run": int(cfg.get("max_new_issues_per_run", 3)),
+            "max_open_issues": int(cfg.get("max_open_issues", 6)),
+            "label": cfg.get("label", "auto-feature"),
+            "pending_requirements": pending,
+            "total_requirements": total,
+        }
 
     def _get_active_repos(self) -> List[Dict[str, Any]]:
         """Get list of active repositories."""

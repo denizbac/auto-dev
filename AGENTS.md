@@ -9,6 +9,7 @@
 - `scripts/` and `bin/`: operational helpers and CLI utilities.
 - `k8s/`: KaaS/EKS manifests (ingress, network policy, ESO, deployments).
 - `infra/iam/`: Terraform for KaaS ESO IAM role.
+- `config/product_guidance.md`: human product direction for PM auto-feature creation.
 - `docker-compose.yaml`, `Dockerfile`: local and containerized runtime.
 
 ## Build, Test, and Development Commands
